@@ -1,10 +1,9 @@
-
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 #[allow(dead_code)]
 pub enum Err {
     WrongType,
     SyntaxError,
-    IOError(std::io::Error),
+    IOError(String),
     NoKey,
     NoValue,
     NoIndex,
@@ -105,6 +104,18 @@ pub enum Err {
 
 impl From<std::io::Error> for Err {
     fn from(err: std::io::Error) -> Self {
-        Err::IOError(err)
+        Err::IOError(err.to_string())
+    }
+}
+
+impl From<std::string::FromUtf8Error> for Err {
+    fn from(_: std::string::FromUtf8Error) -> Self {
+        Err::SyntaxError
+    }
+}
+
+impl Into<String> for Err {
+    fn into(self) -> String {
+        std::fmt::format(format_args!("{:?}", self))
     }
 }

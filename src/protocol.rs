@@ -128,7 +128,7 @@ fn read_byte(stream: &mut impl Read) -> Result<u8, Err> {
     let mut buffer = [0; 1];
     match stream.read_exact(&mut buffer) {
         Ok(_) => Ok(buffer[0]),
-        Err(e) => Err(Err::IOError(e)),
+        Err(e) => Err(Err::IOError(e.to_string())),
     }
 }
 
@@ -150,7 +150,7 @@ fn read_from_stream_until(stream: &mut impl Read, delimiter: &[u8]) -> Result<Ve
                 result.push(buffer[0]);
             }
             Err(e) => {
-                return Err(Err::IOError(e));
+                return Err(Err::IOError(e.to_string()));
             }
         }
     }
@@ -159,50 +159,63 @@ fn read_from_stream_until(stream: &mut impl Read, delimiter: &[u8]) -> Result<Ve
     Ok(result)
 }
 
-#[test]
-fn test_read_from_stream_until() {
-    let mut stream = "hello world\r\n".as_bytes();
-    let bytes = read_from_stream_until(&mut stream, &[b'\r', b'\n']);
-    assert_eq!(bytes.is_ok(), true);
-    assert_eq!(bytes.unwrap(), "hello world".as_bytes());
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[test]
-fn test_parse_request() {
-    let mut stream = "$7\r\nSET a b\r\n".as_bytes();
-    let command = Protocol::from_stream(&mut stream);
-    assert_eq!(command.is_ok(), true);
-    assert_eq!(
-        command.unwrap(),
-        Protocol::BulkStrings("SET a b".as_bytes().to_vec())
-    );
+    #[test]
+    fn test_read_byte() {
+        let mut stream = "hello world".as_bytes();
+        let byte = read_byte(&mut stream);
+        assert_eq!(byte.is_ok(), true);
+        assert_eq!(byte.unwrap(), b'h');
+    }
 
-    let mut stream = "+OK\r\n".as_bytes();
-    let command = Protocol::from_stream(&mut stream);
-    assert_eq!(command.is_ok(), true);
-    assert_eq!(command.unwrap(), Protocol::SimpleString("OK".to_string()));
+    #[test]
+    fn test_read_from_stream_until() {
+        let mut stream = "hello world\r\n".as_bytes();
+        let bytes = read_from_stream_until(&mut stream, &[b'\r', b'\n']);
+        assert_eq!(bytes.is_ok(), true);
+        assert_eq!(bytes.unwrap(), "hello world".as_bytes());
+    }
 
-    let mut stream = "-ERR unknown command 'foobar'\r\n".as_bytes();
-    let command = Protocol::from_stream(&mut stream);
-    assert_eq!(command.is_ok(), true);
-    assert_eq!(
-        command.unwrap(),
-        Protocol::Errors("ERR unknown command 'foobar'".to_string())
-    );
+    #[test]
+    fn test_parse_request() {
+        let mut stream = "$7\r\nSET a b\r\n".as_bytes();
+        let command = Protocol::from_stream(&mut stream);
+        assert_eq!(command.is_ok(), true);
+        assert_eq!(
+            command.unwrap(),
+            Protocol::BulkStrings("SET a b".as_bytes().to_vec())
+        );
 
-    let mut stream = ":1000\r\n".as_bytes();
-    let command = Protocol::from_stream(&mut stream);
-    assert_eq!(command.is_ok(), true);
-    assert_eq!(command.unwrap(), Protocol::Integers(1000));
+        let mut stream = "+OK\r\n".as_bytes();
+        let command = Protocol::from_stream(&mut stream);
+        assert_eq!(command.is_ok(), true);
+        assert_eq!(command.unwrap(), Protocol::SimpleString("OK".to_string()));
 
-    let mut stream = "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes();
-    let command = Protocol::from_stream(&mut stream);
-    assert_eq!(command.is_ok(), true);
-    assert_eq!(
-        command.unwrap(),
-        Protocol::Arrays(vec![
-            Protocol::BulkStrings("hello".as_bytes().to_vec()),
-            Protocol::BulkStrings("world".as_bytes().to_vec())
-        ])
-    );
+        let mut stream = "-ERR unknown command 'foobar'\r\n".as_bytes();
+        let command = Protocol::from_stream(&mut stream);
+        assert_eq!(command.is_ok(), true);
+        assert_eq!(
+            command.unwrap(),
+            Protocol::Errors("ERR unknown command 'foobar'".to_string())
+        );
+
+        let mut stream = ":1000\r\n".as_bytes();
+        let command = Protocol::from_stream(&mut stream);
+        assert_eq!(command.is_ok(), true);
+        assert_eq!(command.unwrap(), Protocol::Integers(1000));
+
+        let mut stream = "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes();
+        let command = Protocol::from_stream(&mut stream);
+        assert_eq!(command.is_ok(), true);
+        assert_eq!(
+            command.unwrap(),
+            Protocol::Arrays(vec![
+                Protocol::BulkStrings("hello".as_bytes().to_vec()),
+                Protocol::BulkStrings("world".as_bytes().to_vec())
+            ])
+        );
+    }
 }

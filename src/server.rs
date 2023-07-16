@@ -1,9 +1,10 @@
 use crate::command::Command;
+use crate::data::Value;
 use crate::db::DB;
 use crate::err::Err;
 use crate::protocol::Protocol;
 
-use std::io::{Write, Read};
+use std::io::{Read, Write};
 use std::net::TcpListener;
 
 pub struct ServerBuilder {
@@ -108,23 +109,28 @@ impl Server {
 
     fn execute(&mut self, command: Command) -> Protocol {
         match command {
-            Command::Get(key) => match self.db.get(key) {
-                Some(value) => match value {
-                    crate::data::Value::KV(v) => {
-                        Protocol::SimpleString(String::from_utf8(v).unwrap())
-                    }
-                    _ => Protocol::Errors(String::from(
-                        "(error) WRONGTYPE Operation against a key holding the wrong kind of value",
-                    )),
+            Command::Get(key) => match self.db.get(&key) {
+                Ok(value) => match value {
+                    Value::KV(v) => Protocol::SimpleString(String::from_utf8(v).unwrap()),
+                    Value::Nil => Protocol::SimpleString(String::from("(nil)")),
+                    _ => Protocol::Errors(String::from("ERR")),
                 },
-                None => Protocol::SimpleString(String::from("(nil)")),
+                Err(e) => Protocol::Errors(e.into()),
             },
-            Command::Set(key, value) => {
-                self.db.set(key, value);
-                Protocol::SimpleString(String::from("OK"))
+            Command::Set(key, value, expire_at) => {
+                let res = self.db.set(key, value, expire_at);
+                if res.is_ok() {
+                    Protocol::SimpleString(String::from("OK"))
+                } else {
+                    Protocol::Errors(String::from("ERR"))
+                }
             }
             Command::Del(key) => {
-                self.db.del(key);
+                self.db.del(&key);
+                Protocol::SimpleString(String::from("OK"))
+            }
+            Command::Expire(key, expire_at) => {
+                self.db.expire(key, expire_at);
                 Protocol::SimpleString(String::from("OK"))
             }
         }
@@ -142,14 +148,20 @@ mod tests {
 
     impl From<Vec<u8>> for TestStream {
         fn from(data: Vec<u8>) -> Self {
-            Self { data:data, closed: false }
+            Self {
+                data: data,
+                closed: false,
+            }
         }
     }
 
     impl std::io::Read for TestStream {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
             if self.closed == false {
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Stream is closed"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Stream is closed",
+                ));
             }
             let len = std::cmp::min(buf.len(), self.data.len());
             buf[..len].copy_from_slice(&self.data[..len]);
@@ -177,4 +189,3 @@ mod tests {
         server.handle_connection(stream);
     }
 }
-
