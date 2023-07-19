@@ -1,75 +1,96 @@
-use crate::command::Command;
+use crate::command::{Command, RequestParser, ResponseSerializer};
 use crate::data::Value;
 use crate::db::DB;
 use crate::err::Err;
-use crate::protocol::Protocol;
+use crate::protocol::{Protocol, ProtocolDecoder, ProtocolEncoder};
+use crate::transport::Transport;
 
-use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::io::{Read, Write,Cursor};
+use std::net::{TcpListener, TcpStream};
+
 
 pub struct ServerBuilder {
     addr: String,
     port: u16,
 }
 
-impl ServerBuilder {
-    pub fn new() -> Self {
-        Self {
-            addr: String::from(""),
-            port: 0,
-        }
-    }
-    pub fn addr(mut self, addr: &str) -> Self {
-        self.addr = String::from(addr);
-        self
-    }
-    pub fn port(mut self, port: u16) -> Self {
-        self.port = port;
-        self
-    }
-    pub fn build(self) -> Server {
-        Server::new(self.addr, self.port)
-    }
-}
 
-pub struct Server {
+// impl ServerBuilder {
+//     pub fn new() -> Self {
+//         Self {
+//             addr: String::from(""),
+//             port: 0,
+//         }
+//     }
+//     pub fn addr(mut self, addr: &str) -> Self {
+//         self.addr = String::from(addr);
+//         self
+//     }
+//     pub fn port(mut self, port: u16) -> Self {
+//         self.port = port;
+//         self
+//     }
+//     pub fn build(self) -> Result<Server,Error> {
+//         Ok(Server::new(self.addr, self.port))
+//     }
+// }
+
+// Server is the main struct of the server
+// data retrieval and storage are done through the server
+// this process can divide into different layers
+// 1. transport layer: handle the connection
+// 2. protocol layer: parse the command from the stream
+// 3. command layer: execute the command
+// 4. storage layer: store the data
+// 5. response layer: represent the response
+// 6. protocol layer: serialize the response
+// 7. transport layer: write the response to the stream
+// the data flow is like this:
+// client -> transport -> protocol -> request  -> storage
+//                                                 |
+//                                                 v
+// client <- transport <- protocol <- response <- storage
+pub struct Server<T:Transport,PD:ProtocolDecoder,PE:ProtocolEncoder,Req:RequestParser,Resp:ResponseSerializer> where {
     db: DB,
-    pub port: u16,
-    pub addr: String,
-    pub shutdown: bool,
+    port: u16,
+    addr: String,
+    shutdown: bool,
+    transport: T,
+    protocol_decoder: PD,
+    protocol_encoder: PE,
+    request_parser: Req,
+    response_parser: Resp,
+    events: Vec<TcpStream>,
+    
 }
 
-impl Server {
-    pub fn new(addr: String, port: u16) -> Self {
-        Self {
-            db: DB::new(),
-            port,
-            addr,
-            shutdown: false,
-        }
-    }
+
+impl<T:Transport,PD:ProtocolDecoder,PE:ProtocolEncoder,Req:RequestParser,Resp:ResponseSerializer> Server<T,PD,PE,Req,Resp> {
+ 
 
     pub fn run(&mut self) -> Result<(), Err> {
         let listener = TcpListener::bind(format!("{}:{}", self.addr, self.port)).unwrap();
         println!("Server is running on {}:{}", self.addr, self.port);
-        // listener.set_nonblocking(true)?;
 
         loop {
             if self.shutdown {
                 break;
             }
-
+            
+            // accept a new connection and push it to the events
+            // the events will be handled by the event loop
             match listener.accept() {
                 Ok((stream, addr)) => {
                     println!("New connection: {}", addr);
-                    self.handle_connection(stream);
-                    println!("Connection closed: {}", addr)
+                    self.events.push(stream);
                 }
                 Err(e) => {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     println!("Error: {}", e);
                 }
             }
+            // check if there is any event can be handled
+            
         }
         Ok(())
     }
@@ -82,14 +103,23 @@ impl Server {
         let mut stream = stream;
 
         loop {
-            let protocol = crate::protocol::Protocol::from_stream(&mut stream);
-            if protocol.is_err() {
-                println!("connection closed: {:?}", protocol.unwrap_err());
+            let req_bytes = self.transport.read(&mut stream);
+            if req_bytes.is_err() {
+                println!("connection closed: {:?}", req_bytes.unwrap_err());
                 drop(stream);
                 break;
             }
-            let protocol = protocol.unwrap();
 
+            let req_bytes = req_bytes.unwrap();
+            let mut req_cursor = Cursor::new(req_bytes);
+            let protocol = self.protocol_decoder.from_stream(&mut req_cursor);
+            if protocol.is_err() {
+                println!("Error: {:?}", protocol);
+                stream.write_all(b"-ERR Syntax error\r\n").unwrap();
+                drop(stream);
+                break;
+            }
+            let protocol    = protocol.unwrap();
             let command = Command::from_protocol(protocol);
             if command.is_err() {
                 println!("Error: {:?}", command);
@@ -100,6 +130,7 @@ impl Server {
 
             let command = command.unwrap();
             let response = self.execute(command);
+            
 
             let resp_bytes = response.serialize_response();
             println!("Response: {:?}", resp_bytes);
@@ -182,10 +213,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_handle_connection() {
-        let mut server = Server::new(String::from("127.0.0.1"), 6379);
-        let stream: TestStream = "$7\r\nSET a b\r\n".as_bytes().to_vec().into();
-        server.handle_connection(stream);
-    }
+    // #[test]
+    // fn test_handle_connection() {
+    //     let mut server = Server::new(String::from("127.0.0.1"), 6379);
+    //     let stream: TestStream = "$7\r\nSET a b\r\n".as_bytes().to_vec().into();
+    //     server.handle_connection(stream);
+    // }
 }

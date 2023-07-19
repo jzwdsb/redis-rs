@@ -1,8 +1,26 @@
 // Redis Commands
-use crate::{err::Err, protocol::Protocol};
+use crate::{err::Err, protocol::Protocol, data::Value};
 use std::time::SystemTime;
 
 type Bytes = Vec<u8>;
+
+pub struct Request {
+    pub cmd: Command,
+    pub expire_at: Option<SystemTime>,
+}
+
+pub struct Response {
+    pub data: Value,
+    pub err: Option<Err>,
+}
+
+pub trait RequestParser {
+    fn from_protocol(&self, protocol: Protocol) -> Result<Request, Err>;
+}
+
+pub trait ResponseSerializer {
+    fn to_protocol(&self, resp: Response) -> Protocol;
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Command {

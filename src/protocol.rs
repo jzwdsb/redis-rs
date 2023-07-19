@@ -1,10 +1,19 @@
 // parse the redis protocol
 
+
+use std::io::{Read, Write};
+use crate::err::Err;
+
 type Bytes = Vec<u8>;
 
-use std::io::Read;
+pub trait ProtocolDecoder {
+    fn from_stream(&self, stream: &mut impl Read) -> Result<Protocol, Err>;
+}
 
-use crate::err::Err;
+pub trait ProtocolEncoder {
+    fn to_stream(&self, stream: &mut impl Write) -> Result<(), Err>;
+}
+
 
 // RESP protocol
 #[derive(Debug, PartialEq)]

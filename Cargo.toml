@@ -7,4 +7,4 @@ edition = "2021"
 
 [dependencies]
 # tokio = { version = "1.29.1", features = ["full"] }
-# mio = { version = "0.8", features = ["os-poll", "net"] }
+mio = { version = "0.8", features = ["os-poll", "net"] }

@@ -1,4 +1,6 @@
-#[derive(Debug, PartialEq)]
+use std::fmt::Display;
+
+#[derive(Debug, PartialEq, Clone)]
 #[allow(dead_code)]
 pub enum Err {
     WrongType,
@@ -100,6 +102,14 @@ pub enum Err {
     NoIndexFieldMatch,
     NoIndexFieldMin,
     NoIndexFieldMax,
+}
+
+impl std::error::Error for Err {}
+
+impl Display for Err {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("{:?}", self).as_str())
+    }
 }
 
 impl From<std::io::Error> for Err {
