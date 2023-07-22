@@ -116,21 +116,21 @@ impl Server {
                     match protocol {
                         Ok(p) => {
                             // TODO: handle the protocol
-                            // let command = Command::from_protocol(p);
-                            // match command {
-                            //     Ok(c) => {
-                            //         let response = self.execute(c);
-                            //         let res_bytes = response.serialize();
-                            //         self.response.insert(token, res_bytes);
-                            //         self.poll
-                            //             .registry()
-                            //             .reregister(&mut stream, token, Interest::WRITABLE)
-                            //             .unwrap();
-                            //     }
-                            //     Err(e) => {
+                            let command = Command::from_protocol(p);
+                            match command {
+                                Ok(c) => {
+                                    let response = self.execute(c);
+                                    let res_bytes = response.serialize();
+                                    self.response.insert(token, res_bytes);
+                                    self.poll
+                                        .registry()
+                                        .reregister(&mut stream, token, Interest::WRITABLE)
+                                        .unwrap();
+                                }
+                                Err(e) => {
                                     
-                            //     }
-                            // }
+                                }
+                            }
                         }
                         Err(ProtocolError::Incomplete) => {
                             self.requests.insert(token, req_bytes);
@@ -165,6 +165,11 @@ impl Server {
                                 }
                             }
                             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                                if n == res_bytes.len() {
+                                    break;
+                                }
+                                // write is blocked, save the remaining bytes and reregister the stream
+                                // send the remaining bytes when the stream is writable again
                                 self.response.insert(token, res_bytes[n..].to_vec());
                                 self.poll
                                     .registry()
@@ -177,6 +182,13 @@ impl Server {
                                 break;
                             }
                         }
+                    }
+                    // if all bytes are written, reregister the stream for reading
+                    if n == res_bytes.len() {
+                        self.poll
+                            .registry()
+                            .reregister(&mut stream, token, Interest::READABLE)
+                            .unwrap();
                     }
                 },
                 _ => unreachable!(),
