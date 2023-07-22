@@ -13,13 +13,13 @@ impl PartialEq for Z {
     }
 }
 
-impl Eq for Z {}
-
 impl PartialOrd for Z {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.score.partial_cmp(&other.score)
     }
 }
+
+impl Eq for Z {}
 
 impl Ord for Z {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {

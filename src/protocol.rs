@@ -1,18 +1,25 @@
 // parse the redis protocol
 
-
-use std::io::{Read, Write};
-use crate::err::Err;
-
 type Bytes = Vec<u8>;
 
-pub trait ProtocolDecoder {
-    fn from_stream(&self, stream: &mut impl Read) -> Result<Protocol, Err>;
+#[derive(Debug, PartialEq, Clone)]
+pub enum ProtocolError {
+    Incomplete,
+    Malformed,
 }
 
-pub trait ProtocolEncoder {
-    fn to_stream(&self, stream: &mut impl Write) -> Result<(), Err>;
+impl From<std::string::FromUtf8Error> for ProtocolError {
+    fn from(_: std::string::FromUtf8Error) -> Self {
+        ProtocolError::Malformed
+    }
 }
+
+impl From<std::num::ParseIntError> for ProtocolError {
+    fn from(_: std::num::ParseIntError) -> Self {
+        ProtocolError::Malformed
+    }
+}
+
 
 
 // RESP protocol
@@ -25,54 +32,83 @@ pub enum Protocol {
     Arrays(Vec<Protocol>), // array of RESP elements `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`
 }
 
+
+const CRLF: &[u8] = b"\r\n";
+
 impl Protocol {
-    pub fn from_stream(stream: &mut impl Read) -> Result<Protocol, Err> {
-        let frist_byte = read_byte(stream);
+    pub fn from_bytes(data: &Bytes) -> Result<Protocol, ProtocolError> {
+        if data.len() == 0 {
+            return Err(ProtocolError::Incomplete);
+        }
+        // may have data copy
+        let frist_byte = data[0];
+        let mut data = &data[1..];
         match frist_byte {
-            Ok(c) => match c {
-                b'+' => {
-                    let rest_bytes = read_from_stream_until(stream, &[b'\r', b'\n'])?;
-                    let rest_bytes = String::from_utf8(rest_bytes).unwrap();
-                    Ok(Protocol::SimpleString(rest_bytes))
+            // +OK\r\n
+            b'+' | b'-' => {
+                if !data.ends_with(b"\r\n") {
+                    return Err(ProtocolError::Incomplete);
                 }
-                b'-' => {
-                    let rest_bytes = read_from_stream_until(stream, &[b'\r', b'\n'])?;
-                    let rest_bytes = String::from_utf8(rest_bytes).unwrap();
-                    Ok(Protocol::Errors(rest_bytes))
+                // remove \r\n
+                data = &data[..data.len() - 2];
+                let simple_string = String::from_utf8(data.to_vec()).unwrap();
+                Ok(Protocol::SimpleString(simple_string))
+            }
+            // :1000\r\n
+            b':' => {
+                if !data.ends_with(b"\r\n") {
+                    return Err(ProtocolError::Incomplete);
                 }
-                b':' => {
-                    let rest_bytes = read_from_stream_until(stream, &[b'\r', b'\n'])?;
-                    let rest_bytes = String::from_utf8(rest_bytes).unwrap();
-                    let rest_bytes = rest_bytes.parse::<i64>().unwrap();
-                    Ok(Protocol::Integers(rest_bytes))
+                // remove \r\n
+                data = &data[..data.len() - 2];
+                let num = String::from_utf8(data.to_vec())?.parse()?;
+
+                Ok(Protocol::Integers(num))
+            }
+            // $6\r\nfoobar\r\n
+            b'$' => {
+                // find \r\n
+                let mut index = index_of(data, CRLF);
+                if index.is_none() {
+                    return Err(ProtocolError::Incomplete);
                 }
-                b'$' => {
-                    let rest_bytes = read_from_stream_until(stream, &[b'\r', b'\n']).unwrap();
-                    let rest_bytes = String::from_utf8(rest_bytes).unwrap();
-                    let rest_bytes_cnt = rest_bytes.parse::<i64>().unwrap();
-                    let rest_bytes = read_from_stream_until(stream, &[b'\r', b'\n']).unwrap();
-                    if rest_bytes.len() as i64 != rest_bytes_cnt {
-                        return Err(Err::SyntaxError);
+                let index = index.unwrap();
+                let num = String::from_utf8(data[..index].to_vec())?.parse()?;
+                data = &data[index + 2..];
+                // check if end with \r\n
+                if data.len() != num + 2 {
+                    return Err(ProtocolError::Incomplete);
+                }
+                if data[num] != b'\r' || data[num + 1] != b'\n' {
+                    return Err(ProtocolError::Incomplete);
+                }
+                let bulk_string = data[..num].to_vec();
+                Ok(Protocol::BulkStrings(bulk_string))
+            }
+            // *2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n
+            b'*' => {
+                // find \r\n
+                let mut index = index_of(data, CRLF);
+                if index.is_none() {
+                    return Err(ProtocolError::Incomplete);
+                }
+                let index = index.unwrap();
+
+                let num = String::from_utf8(data[..index].to_vec())?.parse()?;
+                let mut result = Vec::new();
+                for _ in 0..num {
+                    data = &data[index + 2..];
+                    let mut index = index_of(data, CRLF);
+                    if index.is_none() {
+                        return Err(ProtocolError::Incomplete);
                     }
-                    Ok(Protocol::BulkStrings(rest_bytes))
+                    let index = index.unwrap();
+                    result.push(Protocol::from_bytes(&data[..index].to_vec())?);
                 }
-                b'*' => {
-                    let rest_bytes = read_from_stream_until(stream, &[b'\r', b'\n'])?;
-                    let rest_bytes = String::from_utf8(rest_bytes).unwrap();
-                    let rest_bytes = rest_bytes.parse::<i64>().unwrap();
-                    let mut protocols = Vec::new();
-                    for _ in 0..rest_bytes {
-                        let protocol = Protocol::from_stream(stream)?;
-                        protocols.push(protocol);
-                    }
-                    Ok(Protocol::Arrays(protocols))
-                }
-                _ => {
-                    return Err(Err::SyntaxError);
-                }
-            },
-            Err(err) => {
-                return Err(err);
+                Ok(Protocol::Arrays(result))
+            }
+            _ => {
+                return Err(ProtocolError::Malformed);
             }
         }
     }
@@ -81,12 +117,12 @@ impl Protocol {
     // server response is Simple Strings, the first byte of the reply is "+" followed by the string itself
     // `+OK\r\n`
     //
-    pub fn serialize_response(&self) -> Vec<u8> {
+    pub fn serialize(self) -> Bytes {
         match self {
             Protocol::SimpleString(s) => {
                 let mut result = String::new();
                 result.push('+');
-                result.push_str(s);
+                result.push_str(&s);
                 result.push('\r');
                 result.push('\n');
                 result.into_bytes()
@@ -94,7 +130,7 @@ impl Protocol {
             Protocol::Errors(s) => {
                 let mut result = String::new();
                 result.push('-');
-                result.push_str(s);
+                result.push_str(&s);
                 result.push('\r');
                 result.push('\n');
                 result.into_bytes()
@@ -125,7 +161,7 @@ impl Protocol {
                 result.push('\r');
                 result.push('\n');
                 for protocol in v {
-                    result.push_str(&String::from_utf8(protocol.serialize_response()).unwrap());
+                    result.push_str(&String::from_utf8(protocol.serialize()).unwrap());
                 }
                 result.into_bytes()
             }
@@ -133,39 +169,13 @@ impl Protocol {
     }
 }
 
-fn read_byte(stream: &mut impl Read) -> Result<u8, Err> {
-    let mut buffer = [0; 1];
-    match stream.read_exact(&mut buffer) {
-        Ok(_) => Ok(buffer[0]),
-        Err(e) => Err(Err::IOError(e.to_string())),
-    }
-}
-
-fn read_from_stream_until(stream: &mut impl Read, delimiter: &[u8]) -> Result<Vec<u8>, Err> {
-    let mut result = Vec::new();
-    let mut buffer = [0; 1];
-    let mut delimiter_index = 0;
-    loop {
-        match stream.read_exact(&mut buffer) {
-            Ok(_) => {
-                if buffer[0] == delimiter[delimiter_index] {
-                    delimiter_index += 1;
-                    if delimiter_index == delimiter.len() {
-                        break;
-                    }
-                } else {
-                    delimiter_index = 0;
-                }
-                result.push(buffer[0]);
-            }
-            Err(e) => {
-                return Err(Err::IOError(e.to_string()));
-            }
+fn index_of(data: &[u8], target: &[u8]) -> Option<usize> {
+    for window in data.windows(target.len()) {
+        if window == target {
+            return Some(window.as_ptr() as usize - data.as_ptr() as usize);
         }
     }
-
-    result.truncate(result.len() - delimiter.len() + 1);
-    Ok(result)
+    None
 }
 
 #[cfg(test)]
@@ -173,51 +183,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_read_byte() {
-        let mut stream = "hello world".as_bytes();
-        let byte = read_byte(&mut stream);
-        assert_eq!(byte.is_ok(), true);
-        assert_eq!(byte.unwrap(), b'h');
-    }
-
-    #[test]
-    fn test_read_from_stream_until() {
-        let mut stream = "hello world\r\n".as_bytes();
-        let bytes = read_from_stream_until(&mut stream, &[b'\r', b'\n']);
-        assert_eq!(bytes.is_ok(), true);
-        assert_eq!(bytes.unwrap(), "hello world".as_bytes());
-    }
-
-    #[test]
     fn test_parse_request() {
-        let mut stream = "$7\r\nSET a b\r\n".as_bytes();
-        let command = Protocol::from_stream(&mut stream);
+        let mut data = "$7\r\nSET a b\r\n".as_bytes();
+        let command = Protocol::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(
             command.unwrap(),
             Protocol::BulkStrings("SET a b".as_bytes().to_vec())
         );
 
-        let mut stream = "+OK\r\n".as_bytes();
-        let command = Protocol::from_stream(&mut stream);
+        let mut data = "+OK\r\n".as_bytes();
+        let command = Protocol::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(command.unwrap(), Protocol::SimpleString("OK".to_string()));
 
-        let mut stream = "-ERR unknown command 'foobar'\r\n".as_bytes();
-        let command = Protocol::from_stream(&mut stream);
+        let mut data = "-ERR unknown command 'foobar'\r\n".as_bytes();
+        let command = Protocol::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(
             command.unwrap(),
             Protocol::Errors("ERR unknown command 'foobar'".to_string())
         );
 
-        let mut stream = ":1000\r\n".as_bytes();
-        let command = Protocol::from_stream(&mut stream);
+        let mut data = ":1000\r\n".as_bytes();
+        let command = Protocol::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(command.unwrap(), Protocol::Integers(1000));
 
-        let mut stream = "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes();
-        let command = Protocol::from_stream(&mut stream);
+        let mut data = "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes();
+        let command = Protocol::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(
             command.unwrap(),
@@ -226,5 +220,12 @@ mod tests {
                 Protocol::BulkStrings("world".as_bytes().to_vec())
             ])
         );
+
+        // bad case
+        let mut data = "$7\r\nSET a ba\r\n".as_bytes();
+        let command = Protocol::from_bytes(&data.to_vec());
+        assert_eq!(command.is_ok(), false);
+        assert_eq!(command.unwrap_err(), ProtocolError::Malformed);
     }
+
 }

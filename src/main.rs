@@ -9,6 +9,7 @@ mod traits;
 mod list;
 mod event;
 mod transport;
+mod mio;
 
 fn main() {
     // let mut server = server::ServerBuilder::new()
@@ -17,4 +18,5 @@ fn main() {
     //     .build();
 
     // server.run().unwrap();
+    mio::main();
 }

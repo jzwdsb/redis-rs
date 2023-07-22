@@ -124,6 +124,12 @@ impl From<std::string::FromUtf8Error> for Err {
     }
 }
 
+impl From<std::num::ParseIntError> for Err {
+    fn from(_: std::num::ParseIntError) -> Self {
+        Err::SyntaxError
+    }
+}
+
 impl Into<String> for Err {
     fn into(self) -> String {
         std::fmt::format(format_args!("{:?}", self))

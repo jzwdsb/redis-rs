@@ -1,39 +1,15 @@
-use crate::command::{Command, RequestParser, ResponseSerializer};
+use crate::command::Command;
 use crate::data::Value;
 use crate::db::DB;
 use crate::err::Err;
-use crate::protocol::{Protocol, ProtocolDecoder, ProtocolEncoder};
-use crate::transport::Transport;
+use crate::protocol::{Protocol, ProtocolError};
 
-use std::io::{Read, Write,Cursor};
-use std::net::{TcpListener, TcpStream};
+use std::collections::HashMap;
+use std::error::Error;
+use std::io::{ErrorKind, Read, Write};
 
-
-pub struct ServerBuilder {
-    addr: String,
-    port: u16,
-}
-
-
-// impl ServerBuilder {
-//     pub fn new() -> Self {
-//         Self {
-//             addr: String::from(""),
-//             port: 0,
-//         }
-//     }
-//     pub fn addr(mut self, addr: &str) -> Self {
-//         self.addr = String::from(addr);
-//         self
-//     }
-//     pub fn port(mut self, port: u16) -> Self {
-//         self.port = port;
-//         self
-//     }
-//     pub fn build(self) -> Result<Server,Error> {
-//         Ok(Server::new(self.addr, self.port))
-//     }
-// }
+use mio::net::{TcpListener, TcpStream};
+use mio::{Events, Interest, Poll, Token};
 
 // Server is the main struct of the server
 // data retrieval and storage are done through the server
@@ -50,91 +26,161 @@ pub struct ServerBuilder {
 //                                                 |
 //                                                 v
 // client <- transport <- protocol <- response <- storage
-pub struct Server<T:Transport,PD:ProtocolDecoder,PE:ProtocolEncoder,Req:RequestParser,Resp:ResponseSerializer> where {
+pub struct Server {
     db: DB,
-    port: u16,
-    addr: String,
     shutdown: bool,
-    transport: T,
-    protocol_decoder: PD,
-    protocol_encoder: PE,
-    request_parser: Req,
-    response_parser: Resp,
-    events: Vec<TcpStream>,
-    
+    poll: Poll,
+    listener: TcpListener,
+    events: Events,
+    sockets: HashMap<Token, TcpStream>,
+    token_count: Token,
+    requests: HashMap<Token, Vec<u8>>,
+    response: HashMap<Token, Vec<u8>>,
 }
 
-
-impl<T:Transport,PD:ProtocolDecoder,PE:ProtocolEncoder,Req:RequestParser,Resp:ResponseSerializer> Server<T,PD,PE,Req,Resp> {
- 
+impl Server {
+    pub fn new(addr: String, port: u16, max_client: usize) -> Result<Self, Box<dyn Error>> {
+        let addr = format!("{}:{}", addr, port).parse()?;
+        let db = DB::new();
+        let mut listener = TcpListener::bind(addr)?;
+        let poll = Poll::new()?;
+        poll.registry()
+            .register(
+                &mut listener,
+                Token(0), // server is token 0
+                Interest::READABLE,
+            )
+            .unwrap();
+        Ok(Self {
+            db: db,
+            shutdown: false,
+            poll: poll,
+            listener: listener,
+            events: Events::with_capacity(max_client),
+            sockets: HashMap::new(),
+            token_count: Token(1),
+            response: HashMap::new(),
+            requests: HashMap::new(),
+        })
+    }
 
     pub fn run(&mut self) -> Result<(), Err> {
-        let listener = TcpListener::bind(format!("{}:{}", self.addr, self.port)).unwrap();
-        println!("Server is running on {}:{}", self.addr, self.port);
+        while !self.shutdown {}
 
-        loop {
-            if self.shutdown {
-                break;
-            }
-            
-            // accept a new connection and push it to the events
-            // the events will be handled by the event loop
-            match listener.accept() {
-                Ok((stream, addr)) => {
-                    println!("New connection: {}", addr);
-                    self.events.push(stream);
-                }
-                Err(e) => {
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    println!("Error: {}", e);
-                }
-            }
-            // check if there is any event can be handled
-            
-        }
         Ok(())
     }
 
-    // parse command from stream
-    // execute the command
-    // write the response to the stream
-    fn handle_connection(&mut self, stream: impl Read + Write) {
-        //
-        let mut stream = stream;
-
-        loop {
-            let req_bytes = self.transport.read(&mut stream);
-            if req_bytes.is_err() {
-                println!("connection closed: {:?}", req_bytes.unwrap_err());
-                drop(stream);
-                break;
+    pub fn handle_event(&mut self) {
+        self.poll.poll(&mut self.events, None).unwrap();
+        for event in self.events.iter() {
+            match event.token() {
+                // handle new connection
+                Token(0) => match self.listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let token = self.token_count;
+                        self.poll
+                            .registry()
+                            .register(&mut stream, token, Interest::READABLE)
+                            .unwrap();
+                        self.sockets.insert(token, stream);
+                        self.token_count.0 += 1;
+                    }
+                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
+                    Err(e) => {
+                        println!("Failed to accept new connection: {}", e);
+                    }
+                },
+                token if event.is_readable() => {
+                    let mut buf = [0; 1024];
+                    let mut stream = self.sockets.remove(&token).unwrap();
+                    let mut req_bytes = self.requests.remove(&token).unwrap_or(Vec::new());
+                    loop {
+                        match stream.read(&mut buf) {
+                            Ok(0) => {
+                                self.poll
+                                    .registry()
+                                    .deregister(&mut stream)
+                                    .unwrap();
+                            }
+                            Ok(n) => {
+                                req_bytes.extend_from_slice(&buf[..n]);
+                            }
+                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
+                            Err(e) => {
+                                println!("Failed to read from socket: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                    let mut protocol = Protocol::from_bytes(&req_bytes);
+                    match protocol {
+                        Ok(p) => {
+                            // TODO: handle the protocol
+                            // let command = Command::from_protocol(p);
+                            // match command {
+                            //     Ok(c) => {
+                            //         let response = self.execute(c);
+                            //         let res_bytes = response.serialize();
+                            //         self.response.insert(token, res_bytes);
+                            //         self.poll
+                            //             .registry()
+                            //             .reregister(&mut stream, token, Interest::WRITABLE)
+                            //             .unwrap();
+                            //     }
+                            //     Err(e) => {
+                                    
+                            //     }
+                            // }
+                        }
+                        Err(ProtocolError::Incomplete) => {
+                            self.requests.insert(token, req_bytes);
+                            self.poll
+                                .registry()
+                                .reregister(&mut stream, token, Interest::READABLE)
+                                .unwrap();
+                        }
+                        Err(ProtocolError::Malformed) => {
+                            println!("Malformed request");
+                        }
+                    }
+                    
+                }
+                token if event.is_writable() => {
+                    let mut stream = self.sockets.remove(&token).unwrap();
+                    let res_bytes = self.response.remove(&token).unwrap();
+                    let mut n = 0;
+                    loop {
+                        match stream.write(&res_bytes[n..]) {
+                            Ok(0) => {
+                                self.poll
+                                    .registry()
+                                    .deregister(&mut stream)
+                                    .unwrap();
+                                break;
+                            }
+                            Ok(len) => {
+                                n += len;
+                                if n == res_bytes.len() {
+                                    break;
+                                }
+                            }
+                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                                self.response.insert(token, res_bytes[n..].to_vec());
+                                self.poll
+                                    .registry()
+                                    .reregister(&mut stream, token, Interest::WRITABLE)
+                                    .unwrap();
+                                break;
+                            },
+                            Err(e) => {
+                                println!("Failed to write to socket: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                },
+                _ => unreachable!(),
             }
-
-            let req_bytes = req_bytes.unwrap();
-            let mut req_cursor = Cursor::new(req_bytes);
-            let protocol = self.protocol_decoder.from_stream(&mut req_cursor);
-            if protocol.is_err() {
-                println!("Error: {:?}", protocol);
-                stream.write_all(b"-ERR Syntax error\r\n").unwrap();
-                drop(stream);
-                break;
-            }
-            let protocol    = protocol.unwrap();
-            let command = Command::from_protocol(protocol);
-            if command.is_err() {
-                println!("Error: {:?}", command);
-                stream.write_all(b"-ERR Syntax error\r\n").unwrap();
-                drop(stream);
-                break;
-            }
-
-            let command = command.unwrap();
-            let response = self.execute(command);
-            
-
-            let resp_bytes = response.serialize_response();
-            println!("Response: {:?}", resp_bytes);
-            stream.write_all(resp_bytes.as_slice()).unwrap();
         }
     }
 
@@ -212,11 +258,4 @@ mod tests {
             Ok(())
         }
     }
-
-    // #[test]
-    // fn test_handle_connection() {
-    //     let mut server = Server::new(String::from("127.0.0.1"), 6379);
-    //     let stream: TestStream = "$7\r\nSET a b\r\n".as_bytes().to_vec().into();
-    //     server.handle_connection(stream);
-    // }
 }
