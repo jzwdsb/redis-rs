@@ -13,6 +13,7 @@ target/
 *.pdb
 
 .vscode/*
+.devcontainer/
 
 # Local History for Visual Studio Code
 .history/

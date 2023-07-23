@@ -1,22 +1,18 @@
-mod command;
 mod data;
 mod db;
 mod err;
 mod helper;
-mod protocol;
+mod frame;
 mod server;
-mod traits;
-mod list;
 mod event;
-mod transport;
-mod mio;
+mod cmd;
 
 fn main() {
-    // let mut server = server::ServerBuilder::new()
-    //     .addr("127.0.0.1")
-    //     .port(6379)
-    //     .build();
+    let mut server = server::Server::new(
+        "0.0.0.0",
+        6379,
+        1024,
+    ).unwrap();
 
-    // server.run().unwrap();
-    mio::main();
+    server.run().unwrap();
 }

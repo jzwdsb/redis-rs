@@ -1,12 +1,13 @@
-use crate::command::Command;
-use crate::data::Value;
-use crate::db::DB;
+
+use crate::db::Database;
 use crate::err::Err;
-use crate::protocol::{Protocol, ProtocolError};
+use crate::frame::Frame;
+use crate::helper::{read_request, write_response};
+use crate::cmd::Command;
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::io::{ErrorKind, Read, Write};
+use std::io::ErrorKind;
 
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
@@ -27,7 +28,7 @@ use mio::{Events, Interest, Poll, Token};
 //                                                 v
 // client <- transport <- protocol <- response <- storage
 pub struct Server {
-    db: DB,
+    db: Database,
     shutdown: bool,
     poll: Poll,
     listener: TcpListener,
@@ -39,9 +40,9 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(addr: String, port: u16, max_client: usize) -> Result<Self, Box<dyn Error>> {
+    pub fn new(addr: &str, port: u16, max_client: usize) -> Result<Self, Box<dyn Error>> {
         let addr = format!("{}:{}", addr, port).parse()?;
-        let db = DB::new();
+        let db = Database::new();
         let mut listener = TcpListener::bind(addr)?;
         let poll = Poll::new()?;
         poll.registry()
@@ -65,7 +66,9 @@ impl Server {
     }
 
     pub fn run(&mut self) -> Result<(), Err> {
-        while !self.shutdown {}
+        while !self.shutdown {
+            self.handle_event();
+        }
 
         Ok(())
     }
@@ -91,136 +94,38 @@ impl Server {
                     }
                 },
                 token if event.is_readable() => {
-                    let mut buf = [0; 1024];
-                    let mut stream = self.sockets.remove(&token).unwrap();
-                    let mut req_bytes = self.requests.remove(&token).unwrap_or(Vec::new());
-                    loop {
-                        match stream.read(&mut buf) {
-                            Ok(0) => {
-                                self.poll
-                                    .registry()
-                                    .deregister(&mut stream)
-                                    .unwrap();
-                            }
-                            Ok(n) => {
-                                req_bytes.extend_from_slice(&buf[..n]);
-                            }
-                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
-                            Err(e) => {
-                                println!("Failed to read from socket: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                    let mut protocol = Protocol::from_bytes(&req_bytes);
-                    match protocol {
-                        Ok(p) => {
-                            // TODO: handle the protocol
-                            let command = Command::from_protocol(p);
-                            match command {
-                                Ok(c) => {
-                                    let response = self.execute(c);
-                                    let res_bytes = response.serialize();
-                                    self.response.insert(token, res_bytes);
-                                    self.poll
-                                        .registry()
-                                        .reregister(&mut stream, token, Interest::WRITABLE)
-                                        .unwrap();
-                                }
-                                Err(e) => {
+                    let req_bytes = read_request(&mut self.sockets.get_mut(&token).unwrap()).unwrap();
+
+                    let protocol = Frame::from_bytes(&req_bytes).unwrap();
+                    let command = Command::from_frame(protocol).unwrap();
+                    let resp = Command::apply(&mut self.db, command);
+                    self.response.insert(token, resp.serialize());
                                     
-                                }
-                            }
-                        }
-                        Err(ProtocolError::Incomplete) => {
-                            self.requests.insert(token, req_bytes);
-                            self.poll
-                                .registry()
-                                .reregister(&mut stream, token, Interest::READABLE)
-                                .unwrap();
-                        }
-                        Err(ProtocolError::Malformed) => {
-                            println!("Malformed request");
-                        }
-                    }
-                    
                 }
                 token if event.is_writable() => {
-                    let mut stream = self.sockets.remove(&token).unwrap();
-                    let res_bytes = self.response.remove(&token).unwrap();
-                    let mut n = 0;
-                    loop {
-                        match stream.write(&res_bytes[n..]) {
-                            Ok(0) => {
-                                self.poll
-                                    .registry()
-                                    .deregister(&mut stream)
-                                    .unwrap();
-                                break;
-                            }
+                    if self.response.contains_key(&token) {
+                        let resp_bytes = self.response.remove(&token).unwrap();
+                        let sent = write_response(self.sockets.get_mut(&token).unwrap(), resp_bytes.as_slice());
+                        match sent {
                             Ok(len) => {
-                                n += len;
-                                if n == res_bytes.len() {
-                                    break;
+                                if len == resp_bytes.len() {
+                                    self.poll.registry().reregister(self.sockets.get_mut(&token).unwrap(),token,Interest::READABLE,).unwrap();
+                                } else {
+                                    self.response.insert(token, resp_bytes[len..].to_vec());
                                 }
                             }
                             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                                if n == res_bytes.len() {
-                                    break;
-                                }
-                                // write is blocked, save the remaining bytes and reregister the stream
-                                // send the remaining bytes when the stream is writable again
-                                self.response.insert(token, res_bytes[n..].to_vec());
-                                self.poll
-                                    .registry()
-                                    .reregister(&mut stream, token, Interest::WRITABLE)
-                                    .unwrap();
-                                break;
+                                // try again later
+                                self.response.insert(token, resp_bytes);
                             },
                             Err(e) => {
-                                println!("Failed to write to socket: {}", e);
-                                break;
+                                println!("Failed to send response: {}", e);
                             }
                         }
                     }
-                    // if all bytes are written, reregister the stream for reading
-                    if n == res_bytes.len() {
-                        self.poll
-                            .registry()
-                            .reregister(&mut stream, token, Interest::READABLE)
-                            .unwrap();
-                    }
+                    
                 },
                 _ => unreachable!(),
-            }
-        }
-    }
-
-    fn execute(&mut self, command: Command) -> Protocol {
-        match command {
-            Command::Get(key) => match self.db.get(&key) {
-                Ok(value) => match value {
-                    Value::KV(v) => Protocol::SimpleString(String::from_utf8(v).unwrap()),
-                    Value::Nil => Protocol::SimpleString(String::from("(nil)")),
-                    _ => Protocol::Errors(String::from("ERR")),
-                },
-                Err(e) => Protocol::Errors(e.into()),
-            },
-            Command::Set(key, value, expire_at) => {
-                let res = self.db.set(key, value, expire_at);
-                if res.is_ok() {
-                    Protocol::SimpleString(String::from("OK"))
-                } else {
-                    Protocol::Errors(String::from("ERR"))
-                }
-            }
-            Command::Del(key) => {
-                self.db.del(&key);
-                Protocol::SimpleString(String::from("OK"))
-            }
-            Command::Expire(key, expire_at) => {
-                self.db.expire(key, expire_at);
-                Protocol::SimpleString(String::from("OK"))
             }
         }
     }

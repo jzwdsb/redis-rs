@@ -1,7 +1,14 @@
-use crate::{data::Value, err::Err};
+use crate::data::Value;
+
 use std::{collections::HashMap, time::SystemTime};
 
 type Bytes = Vec<u8>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExecuteError {
+    WrongType,
+    KeyNotFound,
+}
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -10,20 +17,18 @@ struct Entry {
 }
 
 #[derive(Debug, Clone)]
-pub struct DB {
+pub struct Database {
     table: HashMap<Bytes, Entry>,
 }
 
-impl DB {
+impl Database {
     pub fn new() -> Self {
         Self {
             table: HashMap::new(),
         }
     }
 
-    // only works on key-value type
-    // other types will return WrongType error
-    pub fn get(&mut self, key: &Bytes) -> Result<Value, Err> {
+    pub fn get(&mut self, key: &Bytes) -> Result<Bytes, ExecuteError> {
         let entry = self.table.get(key);
         match entry {
             Some(entry) => {
@@ -31,15 +36,15 @@ impl DB {
                 if let Some(expire_at) = entry.expire_at {
                     if expire_at < SystemTime::now() {
                         self.table.remove(key);
-                        return Ok(Value::Nil);
+                        return Err(ExecuteError::KeyNotFound);
                     }
                 }
                 match &entry.value {
-                    Value::KV(v) => Ok(Value::KV(v.clone())),
-                    _ => Err(Err::WrongType),
+                    Value::KV(v) => Ok(v.clone()),
+                    _ => Err(ExecuteError::WrongType),
                 }
             }
-            None => Ok(Value::Nil),
+            None => Err(ExecuteError::KeyNotFound),
         }
     }
 
@@ -48,17 +53,15 @@ impl DB {
         key: Bytes,
         value: Bytes,
         expire_at: Option<SystemTime>,
-    ) -> Result<(), Err> {
+    ) -> Result<(), ExecuteError> {
         let entry = Entry {
             value: Value::KV(value),
             expire_at: expire_at,
         };
         if self.table.contains_key(&key) {
             let old_ent = self.table.get(&key).unwrap();
-            // check whether the old value is a KV
-            match old_ent.value {
-                Value::KV(_) => {}
-                _ => return Err(Err::WrongType),
+            if !old_ent.value.is_kv() {
+                return Err(ExecuteError::WrongType);
             }
             self.table.insert(key, entry);
             return Ok(());
@@ -92,40 +95,40 @@ mod tests {
     fn test_get_set() {
         let key = b"key".to_vec();
         let val = b"value".to_vec();
-        let mut db = DB::new();
+        let mut db = Database::new();
         let res = db.set(key.clone(), val.clone(), None);
         assert_eq!(res, Ok(()));
-        assert_eq!(db.get(&key), Ok(Value::KV(val.clone())));
+        assert_eq!(db.get(&key), Ok(val.clone()));
         db.table.get_mut(&key).unwrap().value = Value::List(vec![]);
         let res = db.set(key, val, None);
-        assert_eq!(res, Err(Err::WrongType));
+        assert_eq!(res, Err(ExecuteError::WrongType));
     }
 
     #[test]
     fn test_del() {
         let key = b"key".to_vec();
         let val = b"value".to_vec();
-        let mut db = DB::new();
+        let mut db = Database::new();
         let res = db.set(key.clone(), val, None);
         assert_eq!(res, Ok(()));
 
         db.del(&key);
-        assert_eq!(db.get(&key), Ok(Value::Nil));
+        assert_eq!(db.get(&key), Err(ExecuteError::KeyNotFound));
     }
 
     #[test]
     fn test_expire() {
         let key = b"key".to_vec();
         let val = b"value".to_vec();
-        let mut db = DB::new();
+        let mut db = Database::new();
         let res = db.set(
             key.clone(),
             val.clone(),
             Some(SystemTime::now() + Duration::from_secs(1)),
         );
         assert_eq!(res, Ok(()));
-        assert_eq!(db.get(&key), Ok(Value::KV(val)));
+        assert_eq!(db.get(&key), Ok(val));
         std::thread::sleep(Duration::from_secs(2));
-        assert_eq!(db.get(&key), Ok(Value::Nil));
+        assert_eq!(db.get(&key), Err(ExecuteError::KeyNotFound));
     }
 }

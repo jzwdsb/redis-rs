@@ -3,42 +3,49 @@
 type Bytes = Vec<u8>;
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum ProtocolError {
+pub enum FrameError {
     Incomplete,
     Malformed,
 }
 
-impl From<std::string::FromUtf8Error> for ProtocolError {
+impl From<std::string::FromUtf8Error> for FrameError {
     fn from(_: std::string::FromUtf8Error) -> Self {
-        ProtocolError::Malformed
+        FrameError::Malformed
     }
 }
 
-impl From<std::num::ParseIntError> for ProtocolError {
+impl From<std::num::ParseIntError> for FrameError {
     fn from(_: std::num::ParseIntError) -> Self {
-        ProtocolError::Malformed
+        FrameError::Malformed
     }
 }
 
-
+impl FrameError {
+    fn is_incomplete(&self) -> bool {
+        match self {
+            FrameError::Incomplete => true,
+            _ => false,
+        }
+    }
+}
 
 // RESP protocol
 #[derive(Debug, PartialEq)]
-pub enum Protocol {
+pub enum Frame {
     SimpleString(String),  // non binary safe string,format: `+OK\r\n`
     Errors(String),        // Error message returned by server,format: `-Error message\r\n`
     Integers(i64),         // Integers: format `:1000\r\n`
     BulkStrings(Bytes),    // Binary safe Strings `$6\r\nfoobar\r\n`
-    Arrays(Vec<Protocol>), // array of RESP elements `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`
+    Arrays(Vec<Frame>), // array of RESP elements `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`
 }
 
 
 const CRLF: &[u8] = b"\r\n";
 
-impl Protocol {
-    pub fn from_bytes(data: &Bytes) -> Result<Protocol, ProtocolError> {
+impl Frame {
+    pub fn from_bytes(data: &Bytes) -> Result<Frame, FrameError> {
         if data.len() == 0 {
-            return Err(ProtocolError::Incomplete);
+            return Err(FrameError::Incomplete);
         }
         // may have data copy
         let frist_byte = data[0];
@@ -47,50 +54,50 @@ impl Protocol {
             // +OK\r\n
             b'+' | b'-' => {
                 if !data.ends_with(b"\r\n") {
-                    return Err(ProtocolError::Incomplete);
+                    return Err(FrameError::Incomplete);
                 }
                 // remove \r\n
                 data = &data[..data.len() - 2];
                 let simple_string = String::from_utf8(data.to_vec()).unwrap();
-                Ok(Protocol::SimpleString(simple_string))
+                Ok(Frame::SimpleString(simple_string))
             }
             // :1000\r\n
             b':' => {
                 if !data.ends_with(b"\r\n") {
-                    return Err(ProtocolError::Incomplete);
+                    return Err(FrameError::Incomplete);
                 }
                 // remove \r\n
                 data = &data[..data.len() - 2];
                 let num = String::from_utf8(data.to_vec())?.parse()?;
 
-                Ok(Protocol::Integers(num))
+                Ok(Frame::Integers(num))
             }
             // $6\r\nfoobar\r\n
             b'$' => {
                 // find \r\n
                 let mut index = index_of(data, CRLF);
                 if index.is_none() {
-                    return Err(ProtocolError::Incomplete);
+                    return Err(FrameError::Incomplete);
                 }
                 let index = index.unwrap();
                 let num = String::from_utf8(data[..index].to_vec())?.parse()?;
                 data = &data[index + 2..];
                 // check if end with \r\n
                 if data.len() != num + 2 {
-                    return Err(ProtocolError::Incomplete);
+                    return Err(FrameError::Incomplete);
                 }
                 if data[num] != b'\r' || data[num + 1] != b'\n' {
-                    return Err(ProtocolError::Incomplete);
+                    return Err(FrameError::Incomplete);
                 }
                 let bulk_string = data[..num].to_vec();
-                Ok(Protocol::BulkStrings(bulk_string))
+                Ok(Frame::BulkStrings(bulk_string))
             }
             // *2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n
             b'*' => {
                 // find \r\n
                 let mut index = index_of(data, CRLF);
                 if index.is_none() {
-                    return Err(ProtocolError::Incomplete);
+                    return Err(FrameError::Incomplete);
                 }
                 let index = index.unwrap();
 
@@ -100,15 +107,15 @@ impl Protocol {
                     data = &data[index + 2..];
                     let mut index = index_of(data, CRLF);
                     if index.is_none() {
-                        return Err(ProtocolError::Incomplete);
+                        return Err(FrameError::Incomplete);
                     }
                     let index = index.unwrap();
-                    result.push(Protocol::from_bytes(&data[..index].to_vec())?);
+                    result.push(Frame::from_bytes(&data[..index].to_vec())?);
                 }
-                Ok(Protocol::Arrays(result))
+                Ok(Frame::Arrays(result))
             }
             _ => {
-                return Err(ProtocolError::Malformed);
+                return Err(FrameError::Malformed);
             }
         }
     }
@@ -119,7 +126,7 @@ impl Protocol {
     //
     pub fn serialize(self) -> Bytes {
         match self {
-            Protocol::SimpleString(s) => {
+            Frame::SimpleString(s) => {
                 let mut result = String::new();
                 result.push('+');
                 result.push_str(&s);
@@ -127,7 +134,7 @@ impl Protocol {
                 result.push('\n');
                 result.into_bytes()
             }
-            Protocol::Errors(s) => {
+            Frame::Errors(s) => {
                 let mut result = String::new();
                 result.push('-');
                 result.push_str(&s);
@@ -135,7 +142,7 @@ impl Protocol {
                 result.push('\n');
                 result.into_bytes()
             }
-            Protocol::Integers(i) => {
+            Frame::Integers(i) => {
                 let mut result = String::new();
                 result.push(':');
                 result.push_str(&i.to_string());
@@ -143,7 +150,7 @@ impl Protocol {
                 result.push('\n');
                 result.into_bytes()
             }
-            Protocol::BulkStrings(s) => {
+            Frame::BulkStrings(s) => {
                 let mut result = String::new();
                 result.push('$');
                 result.push_str(&s.len().to_string());
@@ -154,7 +161,7 @@ impl Protocol {
                 result.push('\n');
                 result.into_bytes()
             }
-            Protocol::Arrays(v) => {
+            Frame::Arrays(v) => {
                 let mut result = String::new();
                 result.push('*');
                 result.push_str(&v.len().to_string());
@@ -185,47 +192,47 @@ mod tests {
     #[test]
     fn test_parse_request() {
         let mut data = "$7\r\nSET a b\r\n".as_bytes();
-        let command = Protocol::from_bytes(&data.to_vec());
+        let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(
             command.unwrap(),
-            Protocol::BulkStrings("SET a b".as_bytes().to_vec())
+            Frame::BulkStrings("SET a b".as_bytes().to_vec())
         );
 
         let mut data = "+OK\r\n".as_bytes();
-        let command = Protocol::from_bytes(&data.to_vec());
+        let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
-        assert_eq!(command.unwrap(), Protocol::SimpleString("OK".to_string()));
+        assert_eq!(command.unwrap(), Frame::SimpleString("OK".to_string()));
 
         let mut data = "-ERR unknown command 'foobar'\r\n".as_bytes();
-        let command = Protocol::from_bytes(&data.to_vec());
+        let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(
             command.unwrap(),
-            Protocol::Errors("ERR unknown command 'foobar'".to_string())
+            Frame::Errors("ERR unknown command 'foobar'".to_string())
         );
 
         let mut data = ":1000\r\n".as_bytes();
-        let command = Protocol::from_bytes(&data.to_vec());
+        let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
-        assert_eq!(command.unwrap(), Protocol::Integers(1000));
+        assert_eq!(command.unwrap(), Frame::Integers(1000));
 
         let mut data = "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes();
-        let command = Protocol::from_bytes(&data.to_vec());
+        let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(
             command.unwrap(),
-            Protocol::Arrays(vec![
-                Protocol::BulkStrings("hello".as_bytes().to_vec()),
-                Protocol::BulkStrings("world".as_bytes().to_vec())
+            Frame::Arrays(vec![
+                Frame::BulkStrings("hello".as_bytes().to_vec()),
+                Frame::BulkStrings("world".as_bytes().to_vec())
             ])
         );
 
         // bad case
         let mut data = "$7\r\nSET a ba\r\n".as_bytes();
-        let command = Protocol::from_bytes(&data.to_vec());
+        let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), false);
-        assert_eq!(command.unwrap_err(), ProtocolError::Malformed);
+        assert_eq!(command.unwrap_err(), FrameError::Malformed);
     }
 
 }

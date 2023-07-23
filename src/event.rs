@@ -8,11 +8,16 @@ use std::io::{ErrorKind, Read, Write};
 use std::time::Duration;
 use std::net::SocketAddr;
 
+use mio::event::{Event};
 use mio::{Events, Interest, Poll, Token};
 
 use mio::net::{TcpListener, TcpStream};
 
-use crate::err::Err;
+use crate::helper::{read_request, write_response};
+
+type Bytes = Vec<u8>;
+
+const SERVER_TOKEN : Token = Token(0);
 
 pub(crate) struct EventLoop {
     poll: Poll,
@@ -32,7 +37,7 @@ impl EventLoop {
         poll.registry()
             .register(
                 &mut listener,
-                Token(0), // server is token 0
+                SERVER_TOKEN, // server is token 0
                 Interest::READABLE | Interest::WRITABLE,
             )
             .unwrap();
@@ -56,11 +61,78 @@ impl EventLoop {
 
     pub fn event_loop(&mut self) {
         loop {
-            self.handle_event(|data| Ok(*data));
+            self.handle_event();
         }
     }
 
-    pub fn handle_event(&mut self, handle: fn(&Vec<u8>) -> Result<Vec<u8>, Err> ) {
+    pub fn accept_new_connection(&mut self, event: &Event) {
+        if event.token() == SERVER_TOKEN {
+            match self.listener.accept() {
+                Ok((mut stream, addr)) => {
+                    println!("New connection: {}", addr);
+                    self.poll
+                        .registry()
+                        .register(&mut stream, self.token_count, Interest::READABLE)
+                        .unwrap();
+                    self.sockets.insert(self.token_count, stream);
+                    self.token_count.0 += 1;
+                }
+                // no connection is ready to read
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => return,
+                Err(e) => println!("Error: {}", e),
+            }
+        }
+    }
+
+    pub fn handle_read(&mut self, event: &Event) {
+        if  !event.is_readable() {
+            return 
+        }
+        let token = event.token();
+        let mut buffer = [0; 1024];
+        let mut req_bytes = self.requests.remove(&token).unwrap_or(Vec::new());
+        loop {
+            let read = self.sockets.get_mut(&token).unwrap().read(&mut buffer);
+            match read {
+                Ok(0) => {
+                    // readable but EOF, remove it from the poll.
+                    println!("meet EOF on token {:?}", token);
+                    let mut stream = self.sockets.remove(&token).unwrap();
+                    self.poll.registry().deregister(&mut stream).unwrap();
+                }
+                Ok(len) => {
+                    // readable and not EOF, save the request to the requests map.
+                    req_bytes.extend_from_slice(&buffer[0..len]);
+                }
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    // but no data to read, break the loop.
+                    break;
+                }
+                Err(e) => panic!("err: {:?}", e),
+            }
+        }
+    }
+    
+    pub fn handle_write(&mut self, event: &Event) {
+        if !event.is_writable() {
+            return
+        }
+        let token = event.token();
+        // check if there is any data to write
+        if self.response.contains_key(&token) {
+            let stream = self.sockets.get_mut(&token).unwrap();
+            let response = self.response.get_mut(&token).unwrap();
+            stream.write(response).unwrap();
+            self.response.remove(&token);
+            // reregister the stream to the poll with readable interest
+            self.poll
+                .registry()
+                .reregister(stream, token, Interest::READABLE)
+                .unwrap();
+        }
+    }
+
+    pub fn handle_event(&mut self) {
         self.poll.poll(&mut self.events, Some(Duration::from_millis(1000))).unwrap();
         
         // check whether is there is incoming request or new connection
@@ -87,56 +159,34 @@ impl EventLoop {
                     // new request comes in
                     // read and parse the request into a request object
                     // return an error if the request is malformed or incomplete when timeout.
-                    let mut buffer = [0; 1024];
-                    let mut req_bytes = self.requests.remove(&token).unwrap_or(Vec::new());
-                    loop {
-                        let read = self.sockets.get_mut(&token).unwrap().read(&mut buffer);
-                        match read {
-                            Ok(0) => {
-                                // readable but EOF, remove it from the poll.
-                                println!("meet EOF on token {:?}", token);
-                                let mut stream = self.sockets.remove(&token).unwrap();
-                                self.poll.registry().deregister(&mut stream).unwrap();
-                            }
-                            Ok(len) => {
-                                // readable and not EOF, save the request to the requests map.
-                                req_bytes.extend_from_slice(&buffer[0..len]);
-                            }
-                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                                // but no data to read, break the loop.
-                                break;
-                            }
-                            Err(e) => panic!("err: {:?}", e),
-                        }
-                    }
+                    let stream = self.sockets.get_mut(&token).unwrap();
+                    let req_bytes = read_request(stream).unwrap();
+                    self.requests.entry(token).or_insert(req_bytes);
                     // handle the request
-                    let res = handle(&req_bytes);
-                    if res.is_err() {
-                        // request incomplete, save it to the requests map.
-                        self.requests.insert(token, req_bytes);
-                        continue;
-                    }
-                    // request complete, send the response to the client.
-                    let res = res.unwrap();
-                    self.response.insert(token, res);
-                    self.poll
-                        .registry()
-                        .reregister(self.sockets.get_mut(&token).unwrap(), token, Interest::WRITABLE)
-                        .unwrap();
+                    
                 }
                 // a connection is ready to write
                 token if event.is_writable() => {
                     // check if there is any data to write
                     if self.response.contains_key(&token) {
+                        let resp = self.response.remove(&token).unwrap();
                         let stream = self.sockets.get_mut(&token).unwrap();
-                        let response = self.response.get_mut(&token).unwrap();
-                        stream.write(response).unwrap();
-                        self.response.remove(&token);
-                        // reregister the stream to the poll with readable interest
-                        self.poll
-                            .registry()
-                            .reregister(stream, token, Interest::READABLE)
-                            .unwrap();
+                        let sent = write_response(stream, &resp.as_slice()).unwrap();
+                        if sent == resp.len() {
+                            // the response is sent completely, reregister the stream to the poll with writable interest
+                            self.poll
+                                .registry()
+                                .reregister(stream, token, Interest::READABLE)
+                                .unwrap();
+                        } else {
+                            // the response is not sent completely, reregister the stream to the poll with writable interest
+                            self.response.insert(token, resp[sent..].to_vec());
+                            self.poll
+                                .registry()
+                                .reregister(stream, token, Interest::WRITABLE)
+                                .unwrap();
+                        }
+                        
                     }
                 }
                 _ => unreachable!(),
@@ -157,14 +207,6 @@ impl EventLoop {
     pub fn remove_request(&mut self, token: Token) {
         self.requests.remove(&token);
     }
-
-    // send response to the client
-    pub fn send_response(&mut self, token: Token, response: Vec<u8>) {
-        self.response.insert(token, response);
-        self.poll
-            .registry()
-            .reregister(self.sockets.get_mut(&token).unwrap(), token, Interest::WRITABLE)
-            .unwrap();
-    }
-
+ 
 }
+

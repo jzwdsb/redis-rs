@@ -37,3 +37,47 @@ pub enum Value {
     Hash(HashMap<Bytes, Bytes>),
     ZSet(Vec<Z>),
 }
+
+impl Value {
+    
+    pub fn is_nil (&self) -> bool {
+        match self {
+            Value::Nil => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_kv (&self) -> bool {
+        match self {
+            Value::KV(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_list (&self) -> bool {
+        match self {
+            Value::List(_) => true,
+            _ => false,
+        }
+    }
+    pub fn is_set (&self) -> bool {
+        match self {
+            Value::Set(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_hash (&self) -> bool {
+        match self {
+            Value::Hash(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_zset (&self) -> bool {
+        match self {
+            Value::ZSet(_) => true,
+            _ => false,
+        }
+    }
+}
