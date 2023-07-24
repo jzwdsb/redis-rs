@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::error::Error;
+use std::future::{Future, pending};
 use std::io::{ErrorKind, Read, Write};
 use std::time::Duration;
 use std::net::SocketAddr;
@@ -18,6 +19,19 @@ use crate::helper::{read_request, write_response};
 type Bytes = Vec<u8>;
 
 const SERVER_TOKEN : Token = Token(0);
+
+//TODO: use self implment future trait and rewrite the event loop with async/await syntax
+pub struct State {
+
+}
+
+impl Future for State {
+    type Output = Vec<u8>;
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        todo!();
+    }
+}
 
 pub(crate) struct EventLoop {
     poll: Poll,
@@ -132,7 +146,7 @@ impl EventLoop {
         }
     }
 
-    pub fn handle_event(&mut self) {
+    pub async fn handle_event(&mut self) {
         self.poll.poll(&mut self.events, Some(Duration::from_millis(1000))).unwrap();
         
         // check whether is there is incoming request or new connection

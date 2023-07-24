@@ -20,6 +20,10 @@ impl Get{
     pub fn key(&self) -> &str {
         &self.key
     }
+
+    pub fn apply(self, db: &mut Database) -> Frame {
+        todo!("Apply command to database")
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -33,6 +37,10 @@ impl Del {
         Self {
             key,
         }
+    }
+
+    pub fn key(&self) -> &Vec<u8> {
+        &self.key
     }
 
     pub fn apply(self, db: &mut Database) -> Frame {
@@ -56,6 +64,18 @@ impl Set {
         }
     }
 
+    pub fn key(&self) -> &Vec<u8> {
+        &self.key
+    }
+
+    pub fn value(&self) -> &Vec<u8> {
+        &self.value
+    }
+
+    pub fn expire(&self) -> &Option<Duration> {
+        &self.expire
+    }
+
     pub fn apply(self, db: &mut Database) -> Frame {
         todo!("Apply command to database")
     }
@@ -74,7 +94,7 @@ pub enum CommandErr {
 
 impl From<std::string::FromUtf8Error> for CommandErr {
     fn from(_: std::string::FromUtf8Error) -> Self {
-        CommandErr::SyntaxError
+        CommandErr::InvalidArgument
     }
 }
 
