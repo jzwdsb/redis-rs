@@ -30,20 +30,19 @@ impl FrameError {
 }
 
 // RESP protocol
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Frame {
-    SimpleString(String),  // non binary safe string,format: `+OK\r\n`
-    Errors(String),        // Error message returned by server,format: `-Error message\r\n`
-    Integers(i64),         // Integers: format `:1000\r\n`
-    BulkStrings(Bytes),    // Binary safe Strings `$6\r\nfoobar\r\n`
-    Arrays(Vec<Frame>), // array of RESP elements `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`
+    SimpleString(String), // non binary safe string,format: `+OK\r\n`
+    Errors(String),       // Error message returned by server,format: `-Error message\r\n`
+    Integers(i64),        // Integers: format `:1000\r\n`
+    BulkStrings(Bytes),   // Binary safe Strings `$6\r\nfoobar\r\n`
+    Arrays(Vec<Frame>),   // array of RESP elements `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`
 }
-
 
 const CRLF: &[u8] = b"\r\n";
 
 impl Frame {
-    pub fn from_bytes(data: &Bytes) -> Result<Frame, FrameError> {
+    pub fn from_bytes(data: &[u8]) -> Result<Frame, FrameError> {
         if data.len() == 0 {
             return Err(FrameError::Incomplete);
         }
@@ -51,8 +50,8 @@ impl Frame {
         let frist_byte = data[0];
         let mut data = &data[1..];
         match frist_byte {
-            // +OK\r\n
-            b'+' | b'-' => {
+            // SimpleString +OK\r\n
+            b'+' => {
                 if !data.ends_with(b"\r\n") {
                     return Err(FrameError::Incomplete);
                 }
@@ -61,7 +60,17 @@ impl Frame {
                 let simple_string = String::from_utf8(data.to_vec()).unwrap();
                 Ok(Frame::SimpleString(simple_string))
             }
-            // :1000\r\n
+            // Error -Error message\r\n
+            b'-' => {
+                if !data.ends_with(b"\r\n") {
+                    return Err(FrameError::Incomplete);
+                }
+                // remove \r\n
+                data = &data[..data.len() - 2];
+                let error_string = String::from_utf8(data.to_vec()).unwrap();
+                Ok(Frame::Errors(error_string))
+            }
+            // Number :1000\r\n
             b':' => {
                 if !data.ends_with(b"\r\n") {
                     return Err(FrameError::Incomplete);
@@ -72,10 +81,10 @@ impl Frame {
 
                 Ok(Frame::Integers(num))
             }
-            // $6\r\nfoobar\r\n
+            // BulkString, binary safe, $6\r\nfoobar\r\n
             b'$' => {
                 // find \r\n
-                let mut index = index_of(data, CRLF);
+                let index = index_of(data, CRLF);
                 if index.is_none() {
                     return Err(FrameError::Incomplete);
                 }
@@ -83,39 +92,59 @@ impl Frame {
                 let num = String::from_utf8(data[..index].to_vec())?.parse()?;
                 data = &data[index + 2..];
                 // check if end with \r\n
-                if data.len() != num + 2 {
+                // find next \r\n
+                let index = index_of(data, CRLF);
+                if index.is_none() {
                     return Err(FrameError::Incomplete);
                 }
-                if data[num] != b'\r' || data[num + 1] != b'\n' {
-                    return Err(FrameError::Incomplete);
+                let index = index.unwrap();
+                if index != num {
+                    return Err(FrameError::Malformed);
                 }
+
+                // remove \r\n
                 let bulk_string = data[..num].to_vec();
                 Ok(Frame::BulkStrings(bulk_string))
             }
-            // *2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n
+            // Arrays *2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n
             b'*' => {
-                // find \r\n
-                let mut index = index_of(data, CRLF);
+                // find first \r\n and parse the number
+                let index = index_of(data, CRLF);
                 if index.is_none() {
                     return Err(FrameError::Incomplete);
                 }
                 let index = index.unwrap();
 
                 let num = String::from_utf8(data[..index].to_vec())?.parse()?;
+                data = &data[index + 2..];
                 let mut result = Vec::new();
                 for _ in 0..num {
-                    data = &data[index + 2..];
-                    let mut index = index_of(data, CRLF);
-                    if index.is_none() {
-                        return Err(FrameError::Incomplete);
-                    }
-                    let index = index.unwrap();
-                    result.push(Frame::from_bytes(&data[..index].to_vec())?);
+                    // remove \r\n
+                    let frame = Frame::from_bytes(&data)?;
+                    data = &data[frame.len()..];
+                    result.push(frame)
                 }
                 Ok(Frame::Arrays(result))
             }
             _ => {
                 return Err(FrameError::Malformed);
+            }
+        }
+    }
+
+    // return the length after serialize
+    fn len(&self) -> usize {
+        match self {
+            Frame::SimpleString(s) => s.len() + 3,
+            Frame::Errors(s) => s.len() + 3,
+            Frame::Integers(i) => i.to_string().len() + 3,
+            Frame::BulkStrings(s) => s.len() + 5 + s.len().to_string().len(),
+            Frame::Arrays(v) => {
+                let mut result = 0;
+                for protocol in v {
+                    result += protocol.len();
+                }
+                result + 3 + v.len().to_string().len()
             }
         }
     }
@@ -191,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_parse_request() {
-        let mut data = "$7\r\nSET a b\r\n".as_bytes();
+        let data = "$7\r\nSET a b\r\n".as_bytes();
         let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(
@@ -199,12 +228,12 @@ mod tests {
             Frame::BulkStrings("SET a b".as_bytes().to_vec())
         );
 
-        let mut data = "+OK\r\n".as_bytes();
+        let data = "+OK\r\n".as_bytes();
         let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(command.unwrap(), Frame::SimpleString("OK".to_string()));
 
-        let mut data = "-ERR unknown command 'foobar'\r\n".as_bytes();
+        let data = "-ERR unknown command 'foobar'\r\n".as_bytes();
         let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(
@@ -212,12 +241,12 @@ mod tests {
             Frame::Errors("ERR unknown command 'foobar'".to_string())
         );
 
-        let mut data = ":1000\r\n".as_bytes();
+        let data = ":1000\r\n".as_bytes();
         let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(command.unwrap(), Frame::Integers(1000));
 
-        let mut data = "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes();
+        let data = "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes();
         let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
         assert_eq!(
@@ -229,10 +258,9 @@ mod tests {
         );
 
         // bad case
-        let mut data = "$7\r\nSET a ba\r\n".as_bytes();
+        let data = "$7\r\nSET a ba\r\n".as_bytes();
         let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), false);
         assert_eq!(command.unwrap_err(), FrameError::Malformed);
     }
-
 }

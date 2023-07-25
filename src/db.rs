@@ -11,14 +11,14 @@ pub enum ExecuteError {
 }
 
 #[derive(Debug, Clone)]
-struct Entry {
+pub struct Entry {
     value: Value,
     expire_at: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Database {
-    table: HashMap<Bytes, Entry>,
+pub(crate) struct Database {
+    pub(crate) table: HashMap<Bytes, Entry>,
 }
 
 impl Database {
