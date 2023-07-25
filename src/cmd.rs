@@ -6,7 +6,7 @@ type Bytes = Vec<u8>;
 
 #[derive(Debug, PartialEq)]
 
-pub struct Get{
+pub(crate) struct Get{
     key: String,
 }
 
@@ -28,7 +28,7 @@ impl Get{
 
 #[derive(Debug, PartialEq)]
 
-pub struct Del {
+pub(crate) struct Del {
     key: Vec<u8>,
 }
 
@@ -76,7 +76,7 @@ impl Set {
         &self.expire
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub(crate) fn apply(self, db: &mut Database) -> Frame {
         todo!("Apply command to database")
     }
 }
@@ -101,7 +101,7 @@ impl From<std::string::FromUtf8Error> for CommandErr {
 
 
 #[derive(Debug, PartialEq)]
-pub enum Command {
+pub(crate) enum Command {
     Get(Get),
     Set(Set),
     Del(Del),
