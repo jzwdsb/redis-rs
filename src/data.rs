@@ -1,9 +1,14 @@
+//! Redis Data Definition
+//! All Redis data types are defined in this document: https://redis.io/topics/data-types-intro
+//! We start implementing the most common data types: String, List, Set, Hash, ZSet
+
+
 use std::collections::{HashMap, HashSet};
 
 type Bytes = Vec<u8>;
 
 #[derive(Clone, Debug)]
-pub struct Z {
+pub(crate) struct Z {
     member: Bytes,
     score: f64,
 }
@@ -29,7 +34,7 @@ impl Ord for Z {
 
 #[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)]
-pub enum Value {
+pub(crate) enum Value {
     Nil,
     KV(Bytes),
     List(Vec<Bytes>),
@@ -39,7 +44,6 @@ pub enum Value {
 }
 
 impl Value {
-    
     pub fn is_nil (&self) -> bool {
         match self {
             Value::Nil => true,

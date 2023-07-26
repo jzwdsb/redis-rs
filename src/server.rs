@@ -1,9 +1,12 @@
+//! Redis Server implementation
+//! use mio to achieve non-blocking IO, multiplexing and event driven
+//! an event loop is used to handle all the IO events
 
+use crate::cmd::Command;
 use crate::db::Database;
 use crate::err::Err;
-use crate::frame::Frame;
+use crate::frame::{Frame, FrameError};
 use crate::helper::{read_request, write_response};
-use crate::cmd::Command;
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -94,37 +97,68 @@ impl Server {
                     }
                 },
                 token if event.is_readable() => {
-                    let req_bytes = read_request(&mut self.sockets.get_mut(&token).unwrap()).unwrap();
+                    let req_bytes = read_request(&mut self.sockets.get_mut(&token).unwrap());
+                    let req_bytes = match req_bytes {
+                        Ok(req_bytes) => req_bytes,
+                        Err(e) => {
+                            println!("Failed to read request: {}", e);
+                            continue;
+                        }
+                    };
 
-                    let protocol = Frame::from_bytes(&req_bytes).unwrap();
-                    let command = Command::from_frame(protocol).unwrap();
+                    let protocol = Frame::from_bytes(&req_bytes);
+                    let protocol = match protocol {
+                        Ok(protocol) => protocol,
+                        Err(e) if e == FrameError::Incomplete => {
+                            // incomplete frame, wait for next read
+                            self.requests.insert(token, req_bytes);
+                            continue;
+                        }
+                        Err(e) => {
+                            println!("Failed to parse protocol: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let command = Command::from_frame(protocol);
+                    let command = match command {
+                        Ok(command) => command,
+                        Err(e) => {
+                            println!("Failed to parse command: {}", e);
+                            continue;
+                        }
+                    };
                     let resp = Command::apply(&mut self.db, command);
                     self.response.insert(token, resp.serialize());
-                                    
                 }
                 token if event.is_writable() => {
                     if self.response.contains_key(&token) {
                         let resp_bytes = self.response.remove(&token).unwrap();
-                        let sent = write_response(self.sockets.get_mut(&token).unwrap(), resp_bytes.as_slice());
+                        let sent = write_response(
+                            self.sockets.get_mut(&token).unwrap(),
+                            resp_bytes.as_slice(),
+                        );
                         match sent {
                             Ok(len) => {
                                 if len == resp_bytes.len() {
-                                    self.poll.registry().reregister(self.sockets.get_mut(&token).unwrap(),token,Interest::READABLE,).unwrap();
+                                    self.poll
+                                        .registry()
+                                        .reregister(
+                                            self.sockets.get_mut(&token).unwrap(),
+                                            token,
+                                            Interest::READABLE,
+                                        )
+                                        .unwrap();
                                 } else {
                                     self.response.insert(token, resp_bytes[len..].to_vec());
                                 }
                             }
-                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                                // try again later
-                                self.response.insert(token, resp_bytes);
-                            },
                             Err(e) => {
                                 println!("Failed to send response: {}", e);
                             }
                         }
                     }
-                    
-                },
+                }
                 _ => unreachable!(),
             }
         }

@@ -1,11 +1,25 @@
-// parse the redis protocol
+//! this module is used to parse the RESP protocol
+//! RESP is defined as a protocol in the Redis documentation:
+//! https://redis.io/docs/reference/protocol-spec/
+
+use std::fmt::Display;
 
 type Bytes = Vec<u8>;
+
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum FrameError {
     Incomplete,
     Malformed,
+}
+
+impl Display for FrameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameError::Incomplete => write!(f, "Incomplete"),
+            FrameError::Malformed => write!(f, "Malformed"),
+        }
+    }
 }
 
 impl From<std::string::FromUtf8Error> for FrameError {
@@ -29,7 +43,7 @@ impl FrameError {
     }
 }
 
-// RESP protocol
+// RESP protocol definition
 #[derive(Debug, Clone, PartialEq)]
 pub enum Frame {
     SimpleString(String), // non binary safe string,format: `+OK\r\n`
@@ -52,7 +66,7 @@ impl Frame {
         match frist_byte {
             // SimpleString +OK\r\n
             b'+' => {
-                if !data.ends_with(b"\r\n") {
+                if !data.ends_with(CRLF) {
                     return Err(FrameError::Incomplete);
                 }
                 // remove \r\n
@@ -62,7 +76,7 @@ impl Frame {
             }
             // Error -Error message\r\n
             b'-' => {
-                if !data.ends_with(b"\r\n") {
+                if !data.ends_with(CRLF) {
                     return Err(FrameError::Incomplete);
                 }
                 // remove \r\n
@@ -72,7 +86,7 @@ impl Frame {
             }
             // Number :1000\r\n
             b':' => {
-                if !data.ends_with(b"\r\n") {
+                if !data.ends_with(CRLF) {
                     return Err(FrameError::Incomplete);
                 }
                 // remove \r\n
@@ -135,10 +149,15 @@ impl Frame {
     // return the length after serialize
     fn len(&self) -> usize {
         match self {
+            // string len + '+' + '\r' + '\n'
             Frame::SimpleString(s) => s.len() + 3,
+            // string len + '-' + '\r' + '\n'
             Frame::Errors(s) => s.len() + 3,
+            // string len + ':' + '\r' + '\n'
             Frame::Integers(i) => i.to_string().len() + 3,
+            // string len + '$' + '\r' + '\n' + string + '\r' + '\n'
             Frame::BulkStrings(s) => s.len() + 5 + s.len().to_string().len(),
+            // frame len + '*' + '\r' + '\n' + frame + '\r' + '\n'
             Frame::Arrays(v) => {
                 let mut result = 0;
                 for protocol in v {
@@ -205,6 +224,7 @@ impl Frame {
     }
 }
 
+#[inline]
 fn index_of(data: &[u8], target: &[u8]) -> Option<usize> {
     for window in data.windows(target.len()) {
         if window == target {

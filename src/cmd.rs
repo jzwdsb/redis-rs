@@ -1,8 +1,13 @@
-// Redis Commands
-use crate::{frame::Frame, db::Database};
-use std::time::Duration;
+//! Redis command Definition
+//! All Redis Commands are definied in this document: https://redis.io/commands
+//! We can start with a simple command: GET, SET, DEL, EXPIRE
+//! 
+//! This file defines the command types and the command parsing logic.
+//! and how the command manipulates the database.
 
-type Bytes = Vec<u8>;
+
+use crate::{frame::Frame, db::Database};
+use std::{time::Duration, fmt::Display};
 
 #[derive(Debug, PartialEq)]
 
@@ -49,7 +54,7 @@ impl Del {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Set{
+pub(crate) struct Set{
     key: Vec<u8>,
     value: Vec<u8>,
     expire: Option<Duration>,
@@ -92,12 +97,23 @@ pub enum CommandErr {
     UnknownCommand,
 }
 
+impl Display for CommandErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommandErr::InvalidProtocol => write!(f, "Invalid Protocol"),
+            CommandErr::SyntaxError => write!(f, "Syntax Error"),
+            CommandErr::WrongNumberOfArguments => write!(f, "Wrong Number Of Arguments"),
+            CommandErr::InvalidArgument => write!(f, "Invalid Argument"),
+            CommandErr::UnknownCommand => write!(f, "Unknown Command"),
+        }
+    }
+}
+
 impl From<std::string::FromUtf8Error> for CommandErr {
     fn from(_: std::string::FromUtf8Error) -> Self {
         CommandErr::InvalidArgument
     }
 }
-
 
 
 #[derive(Debug, PartialEq)]
