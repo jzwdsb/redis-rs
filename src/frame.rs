@@ -6,7 +6,6 @@ use std::fmt::Display;
 
 type Bytes = Vec<u8>;
 
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum FrameError {
     Incomplete,
@@ -46,11 +45,12 @@ impl FrameError {
 // RESP protocol definition
 #[derive(Debug, Clone, PartialEq)]
 pub enum Frame {
+    Nil,                  // nil bulk string: `$-1\r\n`
     SimpleString(String), // non binary safe string,format: `+OK\r\n`
-    Errors(String),       // Error message returned by server,format: `-Error message\r\n`
+    Error(String),        // Error message returned by server,format: `-Error message\r\n`
     Integers(i64),        // Integers: format `:1000\r\n`
     BulkStrings(Bytes),   // Binary safe Strings `$6\r\nfoobar\r\n`
-    Arrays(Vec<Frame>),   // array of RESP elements `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`
+    Array(Vec<Frame>),    // array of RESP elements `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`
 }
 
 const CRLF: &[u8] = b"\r\n";
@@ -82,7 +82,7 @@ impl Frame {
                 // remove \r\n
                 data = &data[..data.len() - 2];
                 let error_string = String::from_utf8(data.to_vec()).unwrap();
-                Ok(Frame::Errors(error_string))
+                Ok(Frame::Error(error_string))
             }
             // Number :1000\r\n
             b':' => {
@@ -138,7 +138,7 @@ impl Frame {
                     data = &data[frame.len()..];
                     result.push(frame)
                 }
-                Ok(Frame::Arrays(result))
+                Ok(Frame::Array(result))
             }
             _ => {
                 return Err(FrameError::Malformed);
@@ -149,16 +149,17 @@ impl Frame {
     // return the length after serialize
     fn len(&self) -> usize {
         match self {
+            Frame::Nil => 5,
             // string len + '+' + '\r' + '\n'
             Frame::SimpleString(s) => s.len() + 3,
             // string len + '-' + '\r' + '\n'
-            Frame::Errors(s) => s.len() + 3,
+            Frame::Error(s) => s.len() + 3,
             // string len + ':' + '\r' + '\n'
             Frame::Integers(i) => i.to_string().len() + 3,
             // string len + '$' + '\r' + '\n' + string + '\r' + '\n'
             Frame::BulkStrings(s) => s.len() + 5 + s.len().to_string().len(),
             // frame len + '*' + '\r' + '\n' + frame + '\r' + '\n'
-            Frame::Arrays(v) => {
+            Frame::Array(v) => {
                 let mut result = 0;
                 for protocol in v {
                     result += protocol.len();
@@ -174,6 +175,14 @@ impl Frame {
     //
     pub fn serialize(self) -> Bytes {
         match self {
+            Frame::Nil => {
+                let mut result = String::new();
+                result.push('$');
+                result.push_str(&(-1).to_string());
+                result.push('\r');
+                result.push('\n');
+                result.into_bytes()
+            }
             Frame::SimpleString(s) => {
                 let mut result = String::new();
                 result.push('+');
@@ -182,7 +191,7 @@ impl Frame {
                 result.push('\n');
                 result.into_bytes()
             }
-            Frame::Errors(s) => {
+            Frame::Error(s) => {
                 let mut result = String::new();
                 result.push('-');
                 result.push_str(&s);
@@ -209,7 +218,7 @@ impl Frame {
                 result.push('\n');
                 result.into_bytes()
             }
-            Frame::Arrays(v) => {
+            Frame::Array(v) => {
                 let mut result = String::new();
                 result.push('*');
                 result.push_str(&v.len().to_string());
@@ -258,7 +267,7 @@ mod tests {
         assert_eq!(command.is_ok(), true);
         assert_eq!(
             command.unwrap(),
-            Frame::Errors("ERR unknown command 'foobar'".to_string())
+            Frame::Error("ERR unknown command 'foobar'".to_string())
         );
 
         let data = ":1000\r\n".as_bytes();
@@ -271,7 +280,7 @@ mod tests {
         assert_eq!(command.is_ok(), true);
         assert_eq!(
             command.unwrap(),
-            Frame::Arrays(vec![
+            Frame::Array(vec![
                 Frame::BulkStrings("hello".as_bytes().to_vec()),
                 Frame::BulkStrings("world".as_bytes().to_vec())
             ])

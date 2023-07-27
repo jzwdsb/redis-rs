@@ -1,19 +1,20 @@
 use crate::data::Value;
 
-use std::{collections::HashMap, time::SystemTime};
+use std::{collections::HashMap, time::Instant};
 
 type Bytes = Vec<u8>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ExecuteError {
+pub(crate) enum ExecuteError {
     WrongType,
     KeyNotFound,
+    OutOfMemory,
 }
 
 #[derive(Debug, Clone)]
 pub struct Entry {
     value: Value,
-    expire_at: Option<SystemTime>,
+    expire_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,7 +35,7 @@ impl Database {
             Some(entry) => {
                 // check expire on read
                 if let Some(expire_at) = entry.expire_at {
-                    if expire_at < SystemTime::now() {
+                    if expire_at < Instant::now() {
                         self.table.remove(key);
                         return Err(ExecuteError::KeyNotFound);
                     }
@@ -52,7 +53,7 @@ impl Database {
         &mut self,
         key: Bytes,
         value: Bytes,
-        expire_at: Option<SystemTime>,
+        expire_at: Option<Instant>,
     ) -> Result<(), ExecuteError> {
         let entry = Entry {
             value: Value::KV(value),
@@ -70,7 +71,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn expire(&mut self, key: Bytes, expire_at: SystemTime) {
+    pub fn expire(&mut self, key: Bytes, expire_at: Instant) {
         let entry = self.table.get_mut(&key);
         match entry {
             Some(entry) => {
@@ -124,7 +125,7 @@ mod tests {
         let res = db.set(
             key.clone(),
             val.clone(),
-            Some(SystemTime::now() + Duration::from_secs(1)),
+            Some(Instant::now() + Duration::from_secs(1)),
         );
         assert_eq!(res, Ok(()));
         assert_eq!(db.get(&key), Ok(val));

@@ -1,33 +1,85 @@
 //! Redis command Definition
 //! All Redis Commands are definied in this document: https://redis.io/commands
 //! We can start with a simple command: GET, SET, DEL, EXPIRE
-//! 
+//!
 //! This file defines the command types and the command parsing logic.
 //! and how the command manipulates the database.
 
-
-use crate::{frame::Frame, db::Database};
-use std::{time::Duration, fmt::Display};
+use crate::{db::Database, frame::Frame};
+use std::{fmt::Display, time::Duration};
 
 #[derive(Debug, PartialEq)]
 
-pub(crate) struct Get{
+pub(crate) struct Get {
     key: String,
 }
 
-impl Get{
-    pub fn new(key: String) -> Self{
-        Self{
-            key,
-        }
+impl Get {
+    pub fn new(key: String) -> Self {
+        Self { key }
     }
 
+    #[allow(dead_code)]
     pub fn key(&self) -> &str {
         &self.key
     }
 
     pub fn apply(self, db: &mut Database) -> Frame {
-        todo!("Apply command to database")
+        match db.get(&self.key.into_bytes()) {
+            Ok(value) => Frame::BulkStrings(value),
+            Err(e) => match e {
+                crate::db::ExecuteError::KeyNotFound => Frame::Nil,
+                crate::db::ExecuteError::WrongType => Frame::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ),
+                _ => unreachable!("unexpect get error: {:?}", e),
+            },
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct Set {
+    key: Vec<u8>,
+    value: Vec<u8>,
+    expire: Option<Duration>,
+}
+
+impl Set {
+    pub fn new(key: Vec<u8>, value: Vec<u8>, expire: Option<Duration>) -> Self {
+        Self { key, value, expire }
+    }
+
+    #[allow(dead_code)]
+    pub fn key(&self) -> &Vec<u8> {
+        &self.key
+    }
+
+    #[allow(dead_code)]
+    pub fn value(&self) -> &Vec<u8> {
+        &self.value
+    }
+
+    #[allow(dead_code)]
+    pub fn expire(&self) -> &Option<Duration> {
+        &self.expire
+    }
+
+    pub fn apply(self, db: &mut Database) -> Frame {
+        let expire_at = match self.expire {
+            Some(duration) => Some(std::time::Instant::now() + duration),
+            None => None,
+        };
+        match db.set(self.key, self.value, expire_at) {
+            Ok(_) => Frame::SimpleString("OK".to_string()),
+            Err(e) => match e {
+                crate::db::ExecuteError::WrongType => Frame::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ),
+                crate::db::ExecuteError::OutOfMemory => Frame::Error("Out of memory".to_string()),
+                _ => unreachable!("unexpect set error: {:?}", e),
+            },
+        }
     }
 }
 
@@ -39,9 +91,7 @@ pub(crate) struct Del {
 
 impl Del {
     pub fn new(key: Vec<u8>) -> Self {
-        Self {
-            key,
-        }
+        Self { key }
     }
 
     pub fn key(&self) -> &Vec<u8> {
@@ -52,41 +102,6 @@ impl Del {
         todo!("Apply command to database")
     }
 }
-
-#[derive(Debug, PartialEq)]
-pub(crate) struct Set{
-    key: Vec<u8>,
-    value: Vec<u8>,
-    expire: Option<Duration>,
-}
-
-impl Set {
-    pub fn new(key: Vec<u8>, value: Vec<u8>, expire: Option<Duration>) -> Self {
-        Self {
-            key,
-            value,
-            expire,
-        }
-    }
-
-    pub fn key(&self) -> &Vec<u8> {
-        &self.key
-    }
-
-    pub fn value(&self) -> &Vec<u8> {
-        &self.value
-    }
-
-    pub fn expire(&self) -> &Option<Duration> {
-        &self.expire
-    }
-
-    pub(crate) fn apply(self, db: &mut Database) -> Frame {
-        todo!("Apply command to database")
-    }
-}
-
-
 
 #[derive(Debug, PartialEq)]
 pub enum CommandErr {
@@ -115,7 +130,6 @@ impl From<std::string::FromUtf8Error> for CommandErr {
     }
 }
 
-
 #[derive(Debug, PartialEq)]
 pub(crate) enum Command {
     Get(Get),
@@ -124,62 +138,62 @@ pub(crate) enum Command {
 }
 impl Command {
     pub fn from_frame(frame: Frame) -> Result<Self, CommandErr> {
-        if let Frame::BulkStrings(cmd) = frame {
-            Self::from_bytes(cmd)
+        // FIXME: in RESP protocol, the client request is actually a RESP Array
+        if let Frame::Array(cmd) = frame {
+            Self::from_frames(cmd)
         } else {
             Err(CommandErr::InvalidProtocol)
         }
     }
 
-    pub fn from_bytes(cmd: Vec<u8>) -> Result<Self, CommandErr> {
-        let mut parts: Vec<Vec<u8>> = cmd
-            .split(|&b| b == b' ')
-            .map(|chunk| chunk.to_vec())
-            .collect();
+    // pub fn from_bytes(cmd: Vec<Frame>) -> Result<Self, CommandErr> {
 
-        if parts.len() == 0 {
-            return Err(CommandErr::WrongNumberOfArguments);
-        }
+    //     let cmd = String::from_utf8(parts.remove(0)).unwrap();
+    //     match cmd.to_lowercase().as_str() {
+    //         "get" => {
+    //             if parts.len() != 1 {
+    //                 return Err(CommandErr::WrongNumberOfArguments);
+    //             }
+    //             let key = String::from_utf8(parts.remove(0))?;
+    //             Ok(Command::Get(Get::new(key)))
+    //         }
+    //         "set" => {
+    //             if parts.len() != 2 {
+    //                 return Err(CommandErr::WrongNumberOfArguments);
+    //             }
+    //             let key = parts.remove(0);
+    //             let value = parts.remove(0);
+    //             if parts.len() > 0 {
+    //                 let expire = parts.remove(0);
+    //                 let expire = String::from_utf8(expire).unwrap();
+    //                 let expire = expire.parse::<u64>().unwrap();
+    //                 return Ok(Command::Set(Set::new(
+    //                     key,
+    //                     value,
+    //                     Some(Duration::from_secs(expire)),
+    //                 )));
+    //             }
+    //             Ok(Command::Set(Set::new(key, value, None)))
+    //         }
+    //         "del" => {
+    //             if parts.len() != 1 {
+    //                 return Err(CommandErr::WrongNumberOfArguments);
+    //             }
+    //             let key = parts.remove(0);
+    //             Ok(Command::Del(Del::new(key)))
+    //         }
+    //         "expire" => {
+    //             todo!("Expire command")
+    //         }
+    //         _ => Err(CommandErr::UnknownCommand),
+    //     }
+    // }
 
-        let cmd = String::from_utf8(parts.remove(0)).unwrap();
-        match cmd.to_lowercase().as_str() {
-            "get" => {
-                if parts.len() != 1 {
-                    return Err(CommandErr::WrongNumberOfArguments);
-                }
-                let key = String::from_utf8(parts.remove(0))?;
-                Ok(Command::Get(Get::new(key)))
-            }
-            "set" => {
-                if parts.len() != 2 {
-                    return Err(CommandErr::WrongNumberOfArguments);
-                }
-                let key = parts.remove(0);
-                let value = parts.remove(0);
-                if parts.len() > 0 {
-                    let expire = parts.remove(0);
-                    let expire = String::from_utf8(expire).unwrap();
-                    let expire = expire.parse::<u64>().unwrap();
-                    return Ok(Command::Set(Set::new(key, value, Some(Duration::from_secs(expire)))));
-                }
-                Ok(Command::Set(Set::new(key, value, None)))
-            }
-            "del" => {
-                if parts.len() != 1 {
-                    return Err(CommandErr::WrongNumberOfArguments);
-                }
-                let key = parts.remove(0);
-                Ok(Command::Del(Del::new(key)))
-            }
-            "expire" => {
-                todo!("Expire command")
-               
-            }
-            _ => Err(CommandErr::UnknownCommand),
-        }
+    pub fn from_frames(frame: Vec<Frame>) -> Result<Self, CommandErr> {
+        todo!("Convert frames into command")
     }
 
-    pub fn apply(db : &mut crate::db::Database, cmd: Self) -> Frame {
-       todo!("Apply command to database")
+    pub fn apply(db: &mut crate::db::Database, cmd: Self) -> Frame {
+        todo!("Apply command to database")
     }
 }
