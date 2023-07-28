@@ -40,18 +40,18 @@ impl Get {
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Set {
-    key: Vec<u8>,
+    key: String,
     value: Vec<u8>,
     expire: Option<Duration>,
 }
 
 impl Set {
-    pub fn new(key: Vec<u8>, value: Vec<u8>, expire: Option<Duration>) -> Self {
+    pub fn new(key: String, value: Vec<u8>, expire: Option<Duration>) -> Self {
         Self { key, value, expire }
     }
 
     #[allow(dead_code)]
-    pub fn key(&self) -> &Vec<u8> {
+    pub fn key(&self) -> &str {
         &self.key
     }
 
@@ -70,7 +70,7 @@ impl Set {
             Some(duration) => Some(std::time::Instant::now() + duration),
             None => None,
         };
-        match db.set(self.key, self.value, expire_at) {
+        match db.set(self.key.into_bytes(), self.value, expire_at) {
             Ok(_) => Frame::SimpleString("OK".to_string()),
             Err(e) => match e {
                 crate::db::ExecuteError::WrongType => Frame::Error(
@@ -86,15 +86,16 @@ impl Set {
 #[derive(Debug, PartialEq)]
 
 pub(crate) struct Del {
-    key: Vec<u8>,
+    key: String,
 }
 
 impl Del {
-    pub fn new(key: Vec<u8>) -> Self {
+    pub fn new(key: String) -> Self {
         Self { key }
     }
 
-    pub fn key(&self) -> &Vec<u8> {
+    #[allow(dead_code)]
+    pub fn key(&self) -> &str {
         &self.key
     }
 
@@ -146,54 +147,69 @@ impl Command {
         }
     }
 
-    // pub fn from_bytes(cmd: Vec<Frame>) -> Result<Self, CommandErr> {
-
-    //     let cmd = String::from_utf8(parts.remove(0)).unwrap();
-    //     match cmd.to_lowercase().as_str() {
-    //         "get" => {
-    //             if parts.len() != 1 {
-    //                 return Err(CommandErr::WrongNumberOfArguments);
-    //             }
-    //             let key = String::from_utf8(parts.remove(0))?;
-    //             Ok(Command::Get(Get::new(key)))
-    //         }
-    //         "set" => {
-    //             if parts.len() != 2 {
-    //                 return Err(CommandErr::WrongNumberOfArguments);
-    //             }
-    //             let key = parts.remove(0);
-    //             let value = parts.remove(0);
-    //             if parts.len() > 0 {
-    //                 let expire = parts.remove(0);
-    //                 let expire = String::from_utf8(expire).unwrap();
-    //                 let expire = expire.parse::<u64>().unwrap();
-    //                 return Ok(Command::Set(Set::new(
-    //                     key,
-    //                     value,
-    //                     Some(Duration::from_secs(expire)),
-    //                 )));
-    //             }
-    //             Ok(Command::Set(Set::new(key, value, None)))
-    //         }
-    //         "del" => {
-    //             if parts.len() != 1 {
-    //                 return Err(CommandErr::WrongNumberOfArguments);
-    //             }
-    //             let key = parts.remove(0);
-    //             Ok(Command::Del(Del::new(key)))
-    //         }
-    //         "expire" => {
-    //             todo!("Expire command")
-    //         }
-    //         _ => Err(CommandErr::UnknownCommand),
-    //     }
-    // }
-
     pub fn from_frames(frame: Vec<Frame>) -> Result<Self, CommandErr> {
-        todo!("Convert frames into command")
+        if frame.is_empty() {
+            return Err(CommandErr::InvalidProtocol);
+        }
+        let cmd = frame_to_string(&frame[0])?;
+        match cmd.to_uppercase().as_str() {
+            "GET" => {
+                if frame.len() != 2 {
+                    return Err(CommandErr::WrongNumberOfArguments);
+                }
+                let key = frame_to_string(&frame[1])?;
+                Ok(Command::Get(Get::new(key)))
+            }
+            "SET" => {
+                if frame.len() < 3 {
+                    return Err(CommandErr::WrongNumberOfArguments);
+                }
+                let key = frame_to_string(&frame[1])?;
+                let value = match frame[2] {
+                    Frame::BulkStrings(ref value) => value.clone(),
+                    _ => return Err(CommandErr::InvalidArgument),
+                };
+                let expire: Option<Duration> = match frame.len() {
+                    3 => None,
+                    4 => {
+                        match frame[3] {
+                            Frame::Integer(n) => {
+                                if n < 0 {
+                                    return Err(CommandErr::SyntaxError);
+                                }
+                                Some(Duration::from_secs(n as u64))
+                            }
+                            _ => return Err(CommandErr::InvalidArgument),
+                        }
+                    }
+                    _ => return Err(CommandErr::WrongNumberOfArguments),
+                };
+                Ok(Command::Set(Set::new(key, value, expire)))
+            }
+            "DEL" => {
+                if frame.len() != 2 {
+                    return Err(CommandErr::WrongNumberOfArguments);
+                }
+                let key = match frame[1] {
+                    Frame::BulkStrings(ref value) => value.clone(),
+                    _ => return Err(CommandErr::InvalidArgument),
+                };
+                Ok(Command::Del(Del::new(String::from_utf8(key)?)))
+            }
+            _ => Err(CommandErr::UnknownCommand),
+        }
     }
 
     pub fn apply(db: &mut crate::db::Database, cmd: Self) -> Frame {
         todo!("Apply command to database")
+    }
+}
+
+
+fn frame_to_string(frame: &Frame) -> Result<String, CommandErr> {
+    match frame {
+        Frame::SimpleString(s) => Ok(s.clone()),
+        Frame::BulkStrings(bytes) => Ok(String::from_utf8(bytes.clone())?),
+        _ => Err(CommandErr::InvalidProtocol),
     }
 }

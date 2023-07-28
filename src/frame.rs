@@ -48,7 +48,7 @@ pub enum Frame {
     Nil,                  // nil bulk string: `$-1\r\n`
     SimpleString(String), // non binary safe string,format: `+OK\r\n`
     Error(String),        // Error message returned by server,format: `-Error message\r\n`
-    Integers(i64),        // Integers: format `:1000\r\n`
+    Integer(i64),         // Integers: format `:1000\r\n`
     BulkStrings(Bytes),   // Binary safe Strings `$6\r\nfoobar\r\n`
     Array(Vec<Frame>),    // array of RESP elements `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`
 }
@@ -93,7 +93,7 @@ impl Frame {
                 data = &data[..data.len() - 2];
                 let num = String::from_utf8(data.to_vec())?.parse()?;
 
-                Ok(Frame::Integers(num))
+                Ok(Frame::Integer(num))
             }
             // BulkString, binary safe, $6\r\nfoobar\r\n
             b'$' => {
@@ -155,7 +155,7 @@ impl Frame {
             // string len + '-' + '\r' + '\n'
             Frame::Error(s) => s.len() + 3,
             // string len + ':' + '\r' + '\n'
-            Frame::Integers(i) => i.to_string().len() + 3,
+            Frame::Integer(i) => i.to_string().len() + 3,
             // string len + '$' + '\r' + '\n' + string + '\r' + '\n'
             Frame::BulkStrings(s) => s.len() + 5 + s.len().to_string().len(),
             // frame len + '*' + '\r' + '\n' + frame + '\r' + '\n'
@@ -199,7 +199,7 @@ impl Frame {
                 result.push('\n');
                 result.into_bytes()
             }
-            Frame::Integers(i) => {
+            Frame::Integer(i) => {
                 let mut result = String::new();
                 result.push(':');
                 result.push_str(&i.to_string());
@@ -273,7 +273,7 @@ mod tests {
         let data = ":1000\r\n".as_bytes();
         let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), true);
-        assert_eq!(command.unwrap(), Frame::Integers(1000));
+        assert_eq!(command.unwrap(), Frame::Integer(1000));
 
         let data = "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes();
         let command = Frame::from_bytes(&data.to_vec());
