@@ -1,10 +1,14 @@
 use crate::data::Value;
 
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::Instant,
+};
 
 type Bytes = Vec<u8>;
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub(crate) enum ExecuteError {
     WrongType,
     KeyNotFound,
@@ -19,7 +23,7 @@ pub struct Entry {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Database {
-    pub(crate) table: HashMap<Bytes, Entry>,
+    pub(crate) table: HashMap<String, Entry>,
 }
 
 impl Database {
@@ -29,7 +33,7 @@ impl Database {
         }
     }
 
-    pub fn get(&mut self, key: &Bytes) -> Result<Bytes, ExecuteError> {
+    pub fn get(&mut self, key: &str) -> Result<Bytes, ExecuteError> {
         let entry = self.table.get(key);
         match entry {
             Some(entry) => {
@@ -51,7 +55,7 @@ impl Database {
 
     pub fn set(
         &mut self,
-        key: Bytes,
+        key: String,
         value: Bytes,
         expire_at: Option<Instant>,
     ) -> Result<(), ExecuteError> {
@@ -71,43 +75,113 @@ impl Database {
         Ok(())
     }
 
-    pub fn expire(&mut self, key: Bytes, expire_at: Instant) {
-        let entry = self.table.get_mut(&key);
+    pub fn expire(&mut self, key: &str, expire_at: Instant) -> Result<(), ExecuteError> {
+        let entry = self.table.get_mut(key);
         match entry {
             Some(entry) => {
                 entry.expire_at = Some(expire_at);
+                Ok(())
             }
-            None => {}
+            None => Err(ExecuteError::KeyNotFound),
         }
     }
 
-    pub fn del(&mut self, key: &Bytes) {
-        self.table.remove(key);
+    pub fn del(&mut self, key: &str) -> Option<Value> {
+        self.table.remove(key).map(|entry| entry.value)
+    }
+
+    pub fn lpush(&mut self, key: &str, values: Vec<Bytes>) -> Result<usize, ExecuteError> {
+        let entry = self.table.get_mut(key);
+        let value_len = values.len();
+        match entry {
+            Some(entry) => {
+                if !entry.value.is_list() {
+                    return Err(ExecuteError::WrongType);
+                }
+                let mut after_len = 0;
+                if let Value::List(list) = &mut entry.value {
+                    for v in values {
+                        list.push_front(v);
+                    }
+                    after_len = list.len();
+                }
+                Ok(after_len)
+            }
+            None => {
+                let mut list = VecDeque::new();
+                list.extend(values);
+                let entry = Entry {
+                    value: Value::List(list),
+                    expire_at: None,
+                };
+                self.table.insert(key.to_string(), entry);
+                Ok(value_len)
+            }
+        }
+    }
+
+    pub fn lrange(&self, key: &str, start: i64, stop: i64) -> Result<Vec<Bytes>, ExecuteError> {
+        let entry = self.table.get(key);
+        match entry {
+            Some(entry) => {
+                if !entry.value.is_list() {
+                    return Err(ExecuteError::WrongType);
+                }
+                let mut res = Vec::new();
+                if let Value::List(list) = &entry.value {
+                    let len = list.len() as i64;
+                    let start = if start < 0 { len + start } else { start };
+                    let stop = if stop < 0 { len + stop } else { stop };
+                    let start = if start < 0 { 0 } else { start };
+                    let stop = if stop < 0 { 0 } else { stop };
+                    let start = start as usize;
+                    let stop = stop as usize;
+                    if start > stop {
+                        return Ok(res);
+                    }
+                    if start >= list.len() {
+                        return Ok(res);
+                    }
+                    let stop = if stop >= list.len() { list.len() - 1 } else { stop };
+
+                    list.iter().skip(start as usize).take((stop - start) as usize).for_each(|v| {
+                        res.push(v.clone());
+                    });
+                    
+                }
+                Ok(res)
+            }
+            None => Err(ExecuteError::KeyNotFound),
+        }
+    }
+
+    pub fn flush(&mut self) {
+        self.table.clear();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{collections::VecDeque, time::Duration};
 
     use super::*;
 
     #[test]
     fn test_get_set() {
-        let key = b"key".to_vec();
+        let key = "key".to_string();
         let val = b"value".to_vec();
         let mut db = Database::new();
         let res = db.set(key.clone(), val.clone(), None);
         assert_eq!(res, Ok(()));
         assert_eq!(db.get(&key), Ok(val.clone()));
-        db.table.get_mut(&key).unwrap().value = Value::List(vec![]);
+        db.table.get_mut(&key).unwrap().value = Value::List(VecDeque::new());
         let res = db.set(key, val, None);
         assert_eq!(res, Err(ExecuteError::WrongType));
     }
 
     #[test]
     fn test_del() {
-        let key = b"key".to_vec();
+        let key = "key".to_string();
         let val = b"value".to_vec();
         let mut db = Database::new();
         let res = db.set(key.clone(), val, None);
@@ -119,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_expire() {
-        let key = b"key".to_vec();
+        let key = "key".to_string();
         let val = b"value".to_vec();
         let mut db = Database::new();
         let res = db.set(

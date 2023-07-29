@@ -3,7 +3,7 @@
 //! We start implementing the most common data types: String, List, Set, Hash, ZSet
 
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 type Bytes = Vec<u8>;
 
@@ -37,13 +37,14 @@ impl Ord for Z {
 pub(crate) enum Value {
     Nil,
     KV(Bytes),
-    List(Vec<Bytes>),
+    List(VecDeque<Bytes>),
     Set(HashSet<Bytes>),
     Hash(HashMap<Bytes, Bytes>),
     ZSet(Vec<Z>),
 }
 
 impl Value {
+    #[allow(dead_code)]
     pub fn is_nil (&self) -> bool {
         match self {
             Value::Nil => true,
@@ -51,6 +52,7 @@ impl Value {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_kv (&self) -> bool {
         match self {
             Value::KV(_) => true,
@@ -58,12 +60,15 @@ impl Value {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_list (&self) -> bool {
         match self {
             Value::List(_) => true,
             _ => false,
         }
     }
+
+    #[allow(dead_code)]
     pub fn is_set (&self) -> bool {
         match self {
             Value::Set(_) => true,
@@ -71,6 +76,7 @@ impl Value {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_hash (&self) -> bool {
         match self {
             Value::Hash(_) => true,
@@ -78,6 +84,7 @@ impl Value {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_zset (&self) -> bool {
         match self {
             Value::ZSet(_) => true,

@@ -5,7 +5,7 @@
 use crate::cmd::Command;
 use crate::db::Database;
 use crate::err::Err;
-use crate::frame::{Frame, FrameError};
+use crate::frame::Frame;
 use crate::helper::{read_request, write_response};
 
 use std::collections::HashMap;
@@ -14,6 +14,9 @@ use std::io::ErrorKind;
 
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
+
+#[allow(unused_imports)]
+use log::{debug, error, info, trace, warn};
 
 // Server is the main struct of the server
 // data retrieval and storage are done through the server
@@ -82,7 +85,8 @@ impl Server {
             match event.token() {
                 // handle new connection
                 Token(0) => match self.listener.accept() {
-                    Ok((mut stream, _)) => {
+                    Ok((mut stream, addr)) => {
+                        trace!("Accept new connection, addr: {}", addr);
                         let token = self.token_count;
                         self.poll
                             .registry()
@@ -93,42 +97,46 @@ impl Server {
                     }
                     Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
                     Err(e) => {
-                        println!("Failed to accept new connection: {}", e);
+                        warn!("Failed to accept new connection: {}", e);
                     }
                 },
                 token if event.is_readable() => {
                     let req_bytes = read_request(&mut self.sockets.get_mut(&token).unwrap());
+                    trace!("Read request from token {:?}, : {:?}", token, req_bytes);
                     let req_bytes = match req_bytes {
                         Ok(req_bytes) => req_bytes,
                         Err(e) => {
-                            println!("Failed to read request: {}", e);
+                            warn!("Failed to read request: {}", e);
                             continue;
                         }
                     };
 
                     let protocol = Frame::from_bytes(&req_bytes);
+                    trace!("Parse protocol from token {:?}: {:?}", token, protocol);
                     let protocol = match protocol {
                         Ok(protocol) => protocol,
-                        Err(e) if e == FrameError::Incomplete => {
+                        Err(ref e) if e.is_incomplete() => {
                             // incomplete frame, wait for next read
                             self.requests.insert(token, req_bytes);
                             continue;
                         }
                         Err(e) => {
-                            println!("Failed to parse protocol: {}", e);
+                            debug!("Failed to parse protocol: {}", e);
                             continue;
                         }
                     };
 
                     let command = Command::from_frame(protocol);
+                    trace!("Parse command from token {:?}: {:?}", token, command);
                     let command = match command {
                         Ok(command) => command,
                         Err(e) => {
-                            println!("Failed to parse command: {}", e);
+                            debug!("Failed to parse command: {}", e);
                             continue;
                         }
                     };
                     let resp = Command::apply(&mut self.db, command);
+                    trace!("Apply command from token {:?}: {:?}", token, resp);
                     self.response.insert(token, resp.serialize());
                 }
                 token if event.is_writable() => {
@@ -154,7 +162,7 @@ impl Server {
                                 }
                             }
                             Err(e) => {
-                                println!("Failed to send response: {}", e);
+                                warn!("Failed to send response: {}", e);
                             }
                         }
                     }

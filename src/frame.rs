@@ -2,7 +2,7 @@
 //! RESP is defined as a protocol in the Redis documentation:
 //! https://redis.io/docs/reference/protocol-spec/
 
-use std::fmt::Display;
+use std::{fmt::Display, ops::IndexMut};
 
 type Bytes = Vec<u8>;
 
@@ -34,7 +34,7 @@ impl From<std::num::ParseIntError> for FrameError {
 }
 
 impl FrameError {
-    fn is_incomplete(&self) -> bool {
+    pub fn is_incomplete(&self) -> bool {
         match self {
             FrameError::Incomplete => true,
             _ => false,
@@ -49,7 +49,7 @@ pub enum Frame {
     SimpleString(String), // non binary safe string,format: `+OK\r\n`
     Error(String),        // Error message returned by server,format: `-Error message\r\n`
     Integer(i64),         // Integers: format `:1000\r\n`
-    BulkStrings(Bytes),   // Binary safe Strings `$6\r\nfoobar\r\n`
+    BulkString(Bytes),    // Binary safe Strings `$6\r\nfoobar\r\n`
     Array(Vec<Frame>),    // array of RESP elements `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`
 }
 
@@ -118,7 +118,7 @@ impl Frame {
 
                 // remove \r\n
                 let bulk_string = data[..num].to_vec();
-                Ok(Frame::BulkStrings(bulk_string))
+                Ok(Frame::BulkString(bulk_string))
             }
             // Arrays *2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n
             b'*' => {
@@ -157,7 +157,7 @@ impl Frame {
             // string len + ':' + '\r' + '\n'
             Frame::Integer(i) => i.to_string().len() + 3,
             // string len + '$' + '\r' + '\n' + string + '\r' + '\n'
-            Frame::BulkStrings(s) => s.len() + 5 + s.len().to_string().len(),
+            Frame::BulkString(s) => s.len() + 5 + s.len().to_string().len(),
             // frame len + '*' + '\r' + '\n' + frame + '\r' + '\n'
             Frame::Array(v) => {
                 let mut result = 0;
@@ -207,7 +207,7 @@ impl Frame {
                 result.push('\n');
                 result.into_bytes()
             }
-            Frame::BulkStrings(s) => {
+            Frame::BulkString(s) => {
                 let mut result = String::new();
                 result.push('$');
                 result.push_str(&s.len().to_string());
@@ -254,7 +254,7 @@ mod tests {
         assert_eq!(command.is_ok(), true);
         assert_eq!(
             command.unwrap(),
-            Frame::BulkStrings("SET a b".as_bytes().to_vec())
+            Frame::BulkString("SET a b".as_bytes().to_vec())
         );
 
         let data = "+OK\r\n".as_bytes();
@@ -281,8 +281,8 @@ mod tests {
         assert_eq!(
             command.unwrap(),
             Frame::Array(vec![
-                Frame::BulkStrings("hello".as_bytes().to_vec()),
-                Frame::BulkStrings("world".as_bytes().to_vec())
+                Frame::BulkString("hello".as_bytes().to_vec()),
+                Frame::BulkString("world".as_bytes().to_vec())
             ])
         );
 
