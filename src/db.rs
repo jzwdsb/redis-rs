@@ -1,3 +1,5 @@
+use log::trace;
+
 use crate::data::Value;
 
 use std::{
@@ -9,7 +11,7 @@ type Bytes = Vec<u8>;
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
-pub(crate) enum ExecuteError {
+pub enum ExecuteError {
     WrongType,
     KeyNotFound,
     OutOfMemory,
@@ -22,8 +24,8 @@ pub struct Entry {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Database {
-    pub(crate) table: HashMap<String, Entry>,
+pub struct Database {
+    pub table: HashMap<String, Entry>,
 }
 
 impl Database {
@@ -34,6 +36,7 @@ impl Database {
     }
 
     pub fn get(&mut self, key: &str) -> Result<Bytes, ExecuteError> {
+        trace!("Get key: {}", key);
         let entry = self.table.get(key);
         match entry {
             Some(entry) => {
@@ -59,6 +62,12 @@ impl Database {
         value: Bytes,
         expire_at: Option<Instant>,
     ) -> Result<(), ExecuteError> {
+        trace!(
+            "Set key: {}, value: {:?}, expire_at: {:?}",
+            key,
+            value,
+            expire_at
+        );
         let entry = Entry {
             value: Value::KV(value),
             expire_at: expire_at,
@@ -87,6 +96,7 @@ impl Database {
     }
 
     pub fn del(&mut self, key: &str) -> Option<Value> {
+        trace!("Del key: {}", key);
         self.table.remove(key).map(|entry| entry.value)
     }
 
@@ -142,12 +152,18 @@ impl Database {
                     if start >= list.len() {
                         return Ok(res);
                     }
-                    let stop = if stop >= list.len() { list.len() - 1 } else { stop };
+                    let stop = if stop >= list.len() {
+                        list.len() - 1
+                    } else {
+                        stop
+                    };
 
-                    list.iter().skip(start as usize).take((stop - start) as usize).for_each(|v| {
-                        res.push(v.clone());
-                    });
-                    
+                    list.iter()
+                        .skip(start as usize)
+                        .take((stop - start) as usize)
+                        .for_each(|v| {
+                            res.push(v.clone());
+                        });
                 }
                 Ok(res)
             }

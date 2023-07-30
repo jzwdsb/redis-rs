@@ -22,6 +22,7 @@ impl Get {
 
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"GET")?;
         let key = match iter.next() {
             Some(Frame::BulkString(key)) => String::from_utf8(key)?,
             _ => return Err(CommandErr::InvalidArgument),
@@ -63,6 +64,8 @@ impl Set {
 
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"SET")?;
+
         let key = match iter.next() {
             Some(Frame::BulkString(key)) => String::from_utf8(key)?,
             _ => return Err(CommandErr::InvalidArgument),
@@ -125,6 +128,7 @@ impl Del {
 
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"DEL")?;
         let key = match iter.next() {
             Some(Frame::BulkString(key)) => String::from_utf8(key)?,
             _ => return Err(CommandErr::InvalidArgument),
@@ -158,6 +162,7 @@ impl Expire {
 
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"EXPIRE")?;
         let key = match iter.next() {
             Some(Frame::BulkString(key)) => String::from_utf8(key)?,
             _ => return Err(CommandErr::InvalidArgument),
@@ -204,6 +209,8 @@ impl LPush {
 
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"LPUSH")?;
+
         let key = match iter.next() {
             Some(Frame::BulkString(key)) => String::from_utf8(key)?,
             _ => return Err(CommandErr::InvalidArgument),
@@ -243,7 +250,7 @@ impl LPush {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct LRange {
+pub(crate) struct LRange {
     key: String,
     start: i64,
     stop: i64,
@@ -257,6 +264,7 @@ impl LRange {
 
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"LRANGE")?;
         let key = match iter.next() {
             Some(Frame::BulkString(key)) => String::from_utf8(key)?,
             _ => return Err(CommandErr::InvalidArgument),
@@ -307,7 +315,7 @@ impl LRange {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Flush {}
+pub(crate) struct Flush {}
 
 impl Flush {
     fn new() -> Self {
@@ -315,9 +323,10 @@ impl Flush {
     }
 
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
-        if frames.len() != 0 {
+        if frames.len() != 1 {
             return Err(CommandErr::WrongNumberOfArguments);
         }
+        check_cmd(&mut frames.into_iter(), b"FLUSH")?;
         Ok(Self::new())
     }
 
@@ -329,7 +338,7 @@ impl Flush {
 
 #[derive(Debug, PartialEq)]
 #[allow(dead_code)]
-pub enum CommandErr {
+pub(crate) enum CommandErr {
     InvalidProtocol,
     SyntaxError,
     WrongNumberOfArguments,
@@ -365,6 +374,7 @@ pub(crate) enum Command {
     LRange(LRange),
     Flush(Flush),
 }
+
 impl Command {
     pub fn from_frame(frame: Frame) -> Result<Self, CommandErr> {
         // FIXME: in RESP protocol, the client request is actually a RESP Array
@@ -409,6 +419,13 @@ fn frame_to_string(frame: &Frame) -> Result<String, CommandErr> {
     match frame {
         Frame::SimpleString(s) => Ok(s.clone()),
         Frame::BulkString(bytes) => Ok(String::from_utf8(bytes.clone())?),
+        _ => Err(CommandErr::InvalidProtocol),
+    }
+}
+
+fn check_cmd(frame: &mut std::vec::IntoIter<Frame>, cmd: &[u8]) -> Result<(), CommandErr> {
+    match frame.next() {
+        Some(Frame::BulkString(ref s)) if s.to_ascii_uppercase() == cmd => Ok(()),
         _ => Err(CommandErr::InvalidProtocol),
     }
 }
@@ -493,20 +510,15 @@ mod tests {
         ])
         .unwrap();
         let result = Command::apply(&mut db, cmd);
-        assert_eq!(
-            result,
-            Frame::Array(vec![
-                Frame::BulkString(b"3".to_vec()),
-                Frame::BulkString(b"2".to_vec()),
-                Frame::BulkString(b"1".to_vec())
-            ])
-        );
+        assert_eq!(result, Frame::Array(vec![]));
     }
 
     #[test]
     fn test_flush() {
         let mut db = Database::new();
-        let cmd = Command::from_frames(vec![Frame::BulkString(b"flush".to_vec())]).unwrap();
+        let cmd = Command::from_frames(vec![Frame::BulkString(b"flush".to_vec())]);
+        assert_eq!(cmd, Ok(Command::Flush(Flush {})));
+        let cmd = cmd.unwrap();
         let result = Command::apply(&mut db, cmd);
         assert_eq!(result, Frame::SimpleString("OK".to_string()));
     }

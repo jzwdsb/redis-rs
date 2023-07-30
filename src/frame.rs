@@ -2,41 +2,41 @@
 //! RESP is defined as a protocol in the Redis documentation:
 //! https://redis.io/docs/reference/protocol-spec/
 
-use std::{fmt::Display, ops::IndexMut};
+use std::fmt::Display;
 
 type Bytes = Vec<u8>;
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum FrameError {
+pub enum FrameParseError {
     Incomplete,
     Malformed,
 }
 
-impl Display for FrameError {
+impl Display for FrameParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FrameError::Incomplete => write!(f, "Incomplete"),
-            FrameError::Malformed => write!(f, "Malformed"),
+            FrameParseError::Incomplete => write!(f, "Incomplete"),
+            FrameParseError::Malformed => write!(f, "Malformed"),
         }
     }
 }
 
-impl From<std::string::FromUtf8Error> for FrameError {
+impl From<std::string::FromUtf8Error> for FrameParseError {
     fn from(_: std::string::FromUtf8Error) -> Self {
-        FrameError::Malformed
+        FrameParseError::Malformed
     }
 }
 
-impl From<std::num::ParseIntError> for FrameError {
+impl From<std::num::ParseIntError> for FrameParseError {
     fn from(_: std::num::ParseIntError) -> Self {
-        FrameError::Malformed
+        FrameParseError::Malformed
     }
 }
 
-impl FrameError {
+impl FrameParseError {
     pub fn is_incomplete(&self) -> bool {
         match self {
-            FrameError::Incomplete => true,
+            FrameParseError::Incomplete => true,
             _ => false,
         }
     }
@@ -55,10 +55,32 @@ pub enum Frame {
 
 const CRLF: &[u8] = b"\r\n";
 
+impl Display for Frame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Frame::Nil => write!(f, "$-1\\r\\n"),
+            Frame::SimpleString(s) => write!(f, "+{}\\r\\n", s),
+            Frame::Error(s) => write!(f, "-{}\\r\\n", s),
+            Frame::Integer(i) => write!(f, ":{}\\r\\n", i),
+            Frame::BulkString(b) => {
+                write!(f, "${}\\r\\n{}\\r\\n", b.len(), String::from_utf8_lossy(b))
+            }
+            Frame::Array(a) => {
+                let mut s = String::new();
+                s.push_str(&format!("*{}\\r\\n", a.len()));
+                for frame in a {
+                    s.push_str(&format!("{}", frame));
+                }
+                write!(f, "{}", s)
+            }
+        }
+    }
+}
+
 impl Frame {
-    pub fn from_bytes(data: &[u8]) -> Result<Frame, FrameError> {
+    pub fn from_bytes(data: &[u8]) -> Result<Frame, FrameParseError> {
         if data.len() == 0 {
-            return Err(FrameError::Incomplete);
+            return Err(FrameParseError::Incomplete);
         }
         // may have data copy
         let frist_byte = data[0];
@@ -67,7 +89,7 @@ impl Frame {
             // SimpleString +OK\r\n
             b'+' => {
                 if !data.ends_with(CRLF) {
-                    return Err(FrameError::Incomplete);
+                    return Err(FrameParseError::Incomplete);
                 }
                 // remove \r\n
                 data = &data[..data.len() - 2];
@@ -77,7 +99,7 @@ impl Frame {
             // Error -Error message\r\n
             b'-' => {
                 if !data.ends_with(CRLF) {
-                    return Err(FrameError::Incomplete);
+                    return Err(FrameParseError::Incomplete);
                 }
                 // remove \r\n
                 data = &data[..data.len() - 2];
@@ -87,7 +109,7 @@ impl Frame {
             // Number :1000\r\n
             b':' => {
                 if !data.ends_with(CRLF) {
-                    return Err(FrameError::Incomplete);
+                    return Err(FrameParseError::Incomplete);
                 }
                 // remove \r\n
                 data = &data[..data.len() - 2];
@@ -100,7 +122,7 @@ impl Frame {
                 // find \r\n
                 let index = index_of(data, CRLF);
                 if index.is_none() {
-                    return Err(FrameError::Incomplete);
+                    return Err(FrameParseError::Incomplete);
                 }
                 let index = index.unwrap();
                 let num = String::from_utf8(data[..index].to_vec())?.parse()?;
@@ -109,11 +131,11 @@ impl Frame {
                 // find next \r\n
                 let index = index_of(data, CRLF);
                 if index.is_none() {
-                    return Err(FrameError::Incomplete);
+                    return Err(FrameParseError::Incomplete);
                 }
                 let index = index.unwrap();
                 if index != num {
-                    return Err(FrameError::Malformed);
+                    return Err(FrameParseError::Malformed);
                 }
 
                 // remove \r\n
@@ -125,7 +147,7 @@ impl Frame {
                 // find first \r\n and parse the number
                 let index = index_of(data, CRLF);
                 if index.is_none() {
-                    return Err(FrameError::Incomplete);
+                    return Err(FrameParseError::Incomplete);
                 }
                 let index = index.unwrap();
 
@@ -141,7 +163,7 @@ impl Frame {
                 Ok(Frame::Array(result))
             }
             _ => {
-                return Err(FrameError::Malformed);
+                return Err(FrameParseError::Malformed);
             }
         }
     }
@@ -176,58 +198,51 @@ impl Frame {
     pub fn serialize(self) -> Bytes {
         match self {
             Frame::Nil => {
-                let mut result = String::new();
-                result.push('$');
-                result.push_str(&(-1).to_string());
-                result.push('\r');
-                result.push('\n');
-                result.into_bytes()
+                let mut result = Vec::<u8>::new();
+                result.push(b'$');
+                result.extend_from_slice(b"-1");
+                result.extend_from_slice(b"\r\n");
+                result
             }
             Frame::SimpleString(s) => {
-                let mut result = String::new();
-                result.push('+');
-                result.push_str(&s);
-                result.push('\r');
-                result.push('\n');
-                result.into_bytes()
+                let mut result = Vec::<u8>::new();
+                result.push(b'+');
+                result.extend_from_slice(s.as_bytes());
+                result.extend_from_slice(b"\r\n");
+                result
             }
             Frame::Error(s) => {
-                let mut result = String::new();
-                result.push('-');
-                result.push_str(&s);
-                result.push('\r');
-                result.push('\n');
-                result.into_bytes()
+                let mut result = Vec::<u8>::new();
+                result.push(b'-');
+                result.extend_from_slice(s.as_bytes());
+                result.extend_from_slice(b"\r\n");
+                result
             }
             Frame::Integer(i) => {
-                let mut result = String::new();
-                result.push(':');
-                result.push_str(&i.to_string());
-                result.push('\r');
-                result.push('\n');
-                result.into_bytes()
+                let mut result = Vec::<u8>::new();
+                result.push(b':');
+                result.extend_from_slice(i.to_string().as_bytes());
+                result.extend_from_slice(b"\r\n");
+                result
             }
             Frame::BulkString(s) => {
-                let mut result = String::new();
-                result.push('$');
-                result.push_str(&s.len().to_string());
-                result.push('\r');
-                result.push('\n');
-                result.push_str(&String::from_utf8(s.clone()).unwrap());
-                result.push('\r');
-                result.push('\n');
-                result.into_bytes()
+                let mut result = Vec::<u8>::new();
+                result.push(b'$');
+                result.extend(s.len().to_string().as_bytes());
+                result.extend_from_slice(b"\r\n");
+                result.extend_from_slice(&s);
+                result.extend_from_slice(b"\r\n");
+                result
             }
             Frame::Array(v) => {
-                let mut result = String::new();
-                result.push('*');
-                result.push_str(&v.len().to_string());
-                result.push('\r');
-                result.push('\n');
+                let mut result = Vec::<u8>::new();
+                result.push(b'*');
+                result.extend_from_slice(&v.len().to_string().into_bytes());
+                result.extend_from_slice(b"\r\n");
                 for protocol in v {
-                    result.push_str(&String::from_utf8(protocol.serialize()).unwrap());
+                    result.extend(protocol.serialize());
                 }
-                result.into_bytes()
+                result
             }
         }
     }
@@ -290,6 +305,6 @@ mod tests {
         let data = "$7\r\nSET a ba\r\n".as_bytes();
         let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), false);
-        assert_eq!(command.unwrap_err(), FrameError::Malformed);
+        assert_eq!(command.unwrap_err(), FrameParseError::Malformed);
     }
 }

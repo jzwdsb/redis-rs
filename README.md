@@ -13,4 +13,3 @@ There are many redis server implement in rust and much better than this project.
 - Full documentation
 - High performance
 - no unsafe code
-- no runtime

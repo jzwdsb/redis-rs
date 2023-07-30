@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 #[derive(Debug, PartialEq, Clone)]
 #[allow(dead_code)]
-pub enum Err {
+pub enum ServerErr {
     WrongType,
     SyntaxError,
     IOError(String),
@@ -10,33 +10,33 @@ pub enum Err {
     NoValue,
 }
 
-impl std::error::Error for Err {}
+impl std::error::Error for ServerErr {}
 
-impl Display for Err {
+impl Display for ServerErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(format!("{:?}", self).as_str())
     }
 }
 
-impl From<std::io::Error> for Err {
+impl From<std::io::Error> for ServerErr {
     fn from(err: std::io::Error) -> Self {
-        Err::IOError(err.to_string())
+        ServerErr::IOError(err.to_string())
     }
 }
 
-impl From<std::string::FromUtf8Error> for Err {
+impl From<std::string::FromUtf8Error> for ServerErr {
     fn from(_: std::string::FromUtf8Error) -> Self {
-        Err::SyntaxError
+        ServerErr::SyntaxError
     }
 }
 
-impl From<std::num::ParseIntError> for Err {
+impl From<std::num::ParseIntError> for ServerErr {
     fn from(_: std::num::ParseIntError) -> Self {
-        Err::SyntaxError
+        ServerErr::SyntaxError
     }
 }
 
-impl Into<String> for Err {
+impl Into<String> for ServerErr {
     fn into(self) -> String {
         std::fmt::format(format_args!("{:?}", self))
     }

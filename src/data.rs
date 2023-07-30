@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 type Bytes = Vec<u8>;
 
 #[derive(Clone, Debug)]
-pub(crate) struct Z {
+pub struct Z {
     member: Bytes,
     score: f64,
 }
@@ -34,7 +34,7 @@ impl Ord for Z {
 
 #[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)]
-pub(crate) enum Value {
+pub enum Value {
     Nil,
     KV(Bytes),
     List(VecDeque<Bytes>),

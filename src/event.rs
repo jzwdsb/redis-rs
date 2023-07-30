@@ -33,7 +33,7 @@ impl Future for State {
     }
 }
 
-pub(crate) struct EventLoop {
+pub struct EventLoop {
     poll: Poll,
     listener: TcpListener,
     events: Events,

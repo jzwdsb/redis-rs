@@ -2,12 +2,6 @@
 //! use mio to achieve non-blocking IO, multiplexing and event driven
 //! an event loop is used to handle all the IO events
 
-use crate::cmd::Command;
-use crate::db::Database;
-use crate::err::Err;
-use crate::frame::Frame;
-use crate::helper::{read_request, write_response};
-
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::ErrorKind;
@@ -17,6 +11,9 @@ use mio::{Events, Interest, Poll, Token};
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+
+use crate::{Database, ServerErr, read_request, bytes_to_printable_string, Frame, Command, write_response};
+
 
 // Server is the main struct of the server
 // data retrieval and storage are done through the server
@@ -71,7 +68,7 @@ impl Server {
         })
     }
 
-    pub fn run(&mut self) -> Result<(), Err> {
+    pub fn run(&mut self) -> Result<(), ServerErr> {
         while !self.shutdown {
             self.handle_event();
         }
@@ -102,17 +99,35 @@ impl Server {
                 },
                 token if event.is_readable() => {
                     let req_bytes = read_request(&mut self.sockets.get_mut(&token).unwrap());
-                    trace!("Read request from token {:?}, : {:?}", token, req_bytes);
                     let req_bytes = match req_bytes {
-                        Ok(req_bytes) => req_bytes,
+                        Ok(req_bytes) => {
+                            let prev_bytes = self.requests.remove(&token);
+                            match prev_bytes {
+                                Some(mut prev_bytes) => {
+                                    prev_bytes.extend_from_slice(&req_bytes);
+                                    prev_bytes
+                                }
+                                None => req_bytes,
+                            }
+                        }
+                        Err(ref e) if e.kind() == ErrorKind::ConnectionAborted => {
+                            // connection closed
+                            trace!("Connection closed: {:?}", token);
+                            self.sockets.remove(&token);
+                            continue;
+                        }
                         Err(e) => {
                             warn!("Failed to read request: {}", e);
                             continue;
                         }
                     };
+                    trace!(
+                        "Read request from token {:?}, : {:?}",
+                        token,
+                        bytes_to_printable_string(&req_bytes)
+                    );
 
                     let protocol = Frame::from_bytes(&req_bytes);
-                    trace!("Parse protocol from token {:?}: {:?}", token, protocol);
                     let protocol = match protocol {
                         Ok(protocol) => protocol,
                         Err(ref e) if e.is_incomplete() => {
@@ -126,11 +141,27 @@ impl Server {
                         }
                     };
 
+                    trace!("Parse protocol from token {:?}: {}", token, protocol);
+
                     let command = Command::from_frame(protocol);
                     trace!("Parse command from token {:?}: {:?}", token, command);
                     let command = match command {
-                        Ok(command) => command,
+                        Ok(command) => {
+                            // complete frame and successful parse command from the frame
+                            // must have reponse to send back
+                            // invert interest to writable
+                            self.poll
+                                .registry()
+                                .reregister(
+                                    self.sockets.get_mut(&token).unwrap(),
+                                    token,
+                                    Interest::WRITABLE,
+                                )
+                                .unwrap();
+                            command
+                        }
                         Err(e) => {
+                            // invalid command, ignore this command
                             debug!("Failed to parse command: {}", e);
                             continue;
                         }
