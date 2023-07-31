@@ -23,10 +23,7 @@ impl Get {
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"GET")?;
-        let key = match iter.next() {
-            Some(Frame::BulkString(key)) => String::from_utf8(key)?,
-            _ => return Err(CommandErr::InvalidArgument),
-        };
+        let key = next_string(&mut iter)?;
         Ok(Self { key })
     }
 
@@ -66,14 +63,8 @@ impl Set {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"SET")?;
 
-        let key = match iter.next() {
-            Some(Frame::BulkString(key)) => String::from_utf8(key)?,
-            _ => return Err(CommandErr::InvalidArgument),
-        };
-        let value = match iter.next() {
-            Some(Frame::BulkString(value)) => value,
-            _ => return Err(CommandErr::InvalidArgument),
-        };
+        let key = next_string(&mut iter)?; // key
+        let value = next_bytes(&mut iter)?; // value
         let expire: Option<Duration> = match iter.next() {
             Some(Frame::Integer(i)) if i > 0 => Some(Duration::from_secs(i as u64)),
             _ => None,
@@ -129,10 +120,7 @@ impl Del {
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"DEL")?;
-        let key = match iter.next() {
-            Some(Frame::BulkString(key)) => String::from_utf8(key)?,
-            _ => return Err(CommandErr::InvalidArgument),
-        };
+        let key = next_string(&mut iter)?; // key
         Ok(Self { key })
     }
 
@@ -163,14 +151,8 @@ impl Expire {
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"EXPIRE")?;
-        let key = match iter.next() {
-            Some(Frame::BulkString(key)) => String::from_utf8(key)?,
-            _ => return Err(CommandErr::InvalidArgument),
-        };
-        let expire = match iter.next() {
-            Some(Frame::Integer(i)) if i > 0 => Duration::from_secs(i as u64),
-            _ => return Err(CommandErr::InvalidArgument),
-        };
+        let key = next_string(&mut iter)?; // key
+        let expire = Duration::from_secs(next_integer(&mut iter)? as u64); // expire
         Ok(Self::new(key, expire))
     }
 
@@ -211,16 +193,10 @@ impl LPush {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"LPUSH")?;
 
-        let key = match iter.next() {
-            Some(Frame::BulkString(key)) => String::from_utf8(key)?,
-            _ => return Err(CommandErr::InvalidArgument),
-        };
+        let key = next_string(&mut iter)?; // key
         let mut value = Vec::new();
-        for frame in iter {
-            match frame {
-                Frame::BulkString(s) => value.push(s),
-                _ => return Err(CommandErr::InvalidArgument),
-            }
+        while iter.len() > 0 {
+            value.push(next_bytes(&mut iter)?);
         }
         Ok(Self::new(key, value))
     }
@@ -265,18 +241,9 @@ impl LRange {
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"LRANGE")?;
-        let key = match iter.next() {
-            Some(Frame::BulkString(key)) => String::from_utf8(key)?,
-            _ => return Err(CommandErr::InvalidArgument),
-        };
-        let start = match iter.next() {
-            Some(Frame::Integer(i)) => i,
-            _ => return Err(CommandErr::InvalidArgument),
-        };
-        let stop = match iter.next() {
-            Some(Frame::Integer(i)) => i,
-            _ => return Err(CommandErr::InvalidArgument),
-        };
+        let key = next_string(&mut iter)?; // key
+        let start = next_integer(&mut iter)?; // start
+        let stop = next_integer(&mut iter)?; // stop
         Ok(Self { key, start, stop })
     }
 
@@ -377,7 +344,6 @@ pub(crate) enum Command {
 
 impl Command {
     pub fn from_frame(frame: Frame) -> Result<Self, CommandErr> {
-        // FIXME: in RESP protocol, the client request is actually a RESP Array
         if let Frame::Array(cmd) = frame {
             Self::from_frames(cmd)
         } else {
@@ -423,8 +389,36 @@ fn frame_to_string(frame: &Frame) -> Result<String, CommandErr> {
     }
 }
 
+#[inline]
+fn next_string(frame: &mut std::vec::IntoIter<Frame>) -> Result<String, CommandErr> {
+    match frame.next() {
+        Some(Frame::SimpleString(s)) => Ok(s),
+        Some(Frame::BulkString(bytes)) => Ok(String::from_utf8(bytes)?),
+        _ => Err(CommandErr::InvalidProtocol),
+    }
+}
+
+#[inline]
+fn next_bytes(frame: &mut std::vec::IntoIter<Frame>) -> Result<Vec<u8>, CommandErr> {
+    match frame.next() {
+        Some(Frame::SimpleString(s)) => Ok(s.into_bytes()),
+        Some(Frame::BulkString(bytes)) => Ok(bytes),
+        _ => Err(CommandErr::InvalidProtocol),
+    }
+}
+
+#[inline]
+fn next_integer(frame: &mut std::vec::IntoIter<Frame>) -> Result<i64, CommandErr> {
+    match frame.next() {
+        Some(Frame::Integer(i)) => Ok(i),
+        _ => Err(CommandErr::InvalidProtocol),
+    }
+}
+
+#[inline]
 fn check_cmd(frame: &mut std::vec::IntoIter<Frame>, cmd: &[u8]) -> Result<(), CommandErr> {
     match frame.next() {
+        Some(Frame::SimpleString(ref s)) if s.to_ascii_uppercase().as_bytes() == cmd => Ok(()),
         Some(Frame::BulkString(ref s)) if s.to_ascii_uppercase() == cmd => Ok(()),
         _ => Err(CommandErr::InvalidProtocol),
     }

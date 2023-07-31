@@ -84,10 +84,11 @@ impl Frame {
         }
         // may have data copy
         let frist_byte = data[0];
-        let mut data = &data[1..];
+        // let mut data = &data[1..];
         match frist_byte {
             // SimpleString +OK\r\n
             b'+' => {
+                let mut data = &data[1..];
                 if !data.ends_with(CRLF) {
                     return Err(FrameParseError::Incomplete);
                 }
@@ -98,6 +99,7 @@ impl Frame {
             }
             // Error -Error message\r\n
             b'-' => {
+                let mut data = &data[1..];
                 if !data.ends_with(CRLF) {
                     return Err(FrameParseError::Incomplete);
                 }
@@ -108,6 +110,7 @@ impl Frame {
             }
             // Number :1000\r\n
             b':' => {
+                let mut data = &data[1..];
                 if !data.ends_with(CRLF) {
                     return Err(FrameParseError::Incomplete);
                 }
@@ -119,6 +122,7 @@ impl Frame {
             }
             // BulkString, binary safe, $6\r\nfoobar\r\n
             b'$' => {
+                let mut data = &data[1..];
                 // find \r\n
                 let index = index_of(data, CRLF);
                 if index.is_none() {
@@ -144,6 +148,7 @@ impl Frame {
             }
             // Arrays *2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n
             b'*' => {
+                let mut data = &data[1..];
                 // find first \r\n and parse the number
                 let index = index_of(data, CRLF);
                 if index.is_none() {
@@ -162,9 +167,36 @@ impl Frame {
                 }
                 Ok(Frame::Array(result))
             }
-            _ => {
-                return Err(FrameParseError::Malformed);
+            // inline command, such as `set key value`
+            // separated by space
+            b if b.is_ascii_alphanumeric() => {
+                let mut data = data;
+                let index = index_of(data, CRLF);
+                if index.is_some() {
+                    data = &data[..index.unwrap()];
+                }
+
+                let s = String::from_utf8(data.to_vec())?;
+                let mut result = Vec::new();
+                for item in s.split(' ') {
+                    // check simple string or integer
+                    match item.as_bytes()[0] {
+                        n if n.is_ascii_digit() => {
+                            let num = item.parse()?;
+                            result.push(Frame::Integer(num));
+                        }
+                        c if c.is_ascii_alphabetic() => {
+                            result.push(Frame::SimpleString(item.to_string()));
+                        }
+                        _ => {
+                            return Err(FrameParseError::Malformed);
+                        }
+                    }
+                }
+
+                return Ok(Frame::Array(result));
             }
+            _ => Err(FrameParseError::Malformed),
         }
     }
 
@@ -298,6 +330,20 @@ mod tests {
             Frame::Array(vec![
                 Frame::BulkString("hello".as_bytes().to_vec()),
                 Frame::BulkString("world".as_bytes().to_vec())
+            ])
+        );
+
+        // inline command
+        let data = "SET a b 1".as_bytes();
+        let command = Frame::from_bytes(&data.to_vec());
+        assert_eq!(command.is_ok(), true);
+        assert_eq!(
+            command.unwrap(),
+            Frame::Array(vec![
+                Frame::SimpleString("SET".to_string()),
+                Frame::SimpleString("a".to_string()),
+                Frame::SimpleString("b".to_string()),
+                Frame::Integer(1),
             ])
         );
 
