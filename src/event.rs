@@ -9,7 +9,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::time::Duration;
 use std::net::SocketAddr;
 
-use mio::event::{Event};
+use mio::event::Event;
 use mio::{Events, Interest, Poll, Token};
 
 use mio::net::{TcpListener, TcpStream};

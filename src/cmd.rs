@@ -5,6 +5,8 @@
 //! This file defines the command types and the command parsing logic.
 //! and how the command manipulates the database.
 
+use log::trace;
+
 use crate::{db::Database, frame::Frame};
 use std::{fmt::Display, time::Duration};
 
@@ -281,6 +283,197 @@ impl LRange {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct ZAdd {
+    key: String,
+    nx: bool,
+    xx: bool,
+    lt: bool,
+    gt: bool,
+    ch: bool,
+    incr: bool,
+    zset: Vec<(f64, Vec<u8>)>,
+}
+
+impl ZAdd {
+    fn new(
+        key: String,
+        nx: bool,
+        xx: bool,
+        lt: bool,
+        gt: bool,
+        ch: bool,
+        incr: bool,
+        zset: Vec<(f64, Vec<u8>)>,
+    ) -> Self {
+        Self {
+            key,
+            zset,
+            nx,
+            xx,
+            lt,
+            gt,
+            ch,
+            incr,
+        }
+    }
+
+    // ZADD key [NX|XX] [CH] [INCR] score member [score member ...]
+    fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+        if frames.len() < 3 {
+            return Err(CommandErr::WrongNumberOfArguments);
+        }
+
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"ZADD")?;
+        let key = next_string(&mut iter)?;
+
+        // [NX|XX] [CH] [INCR]
+        let mut nx = false;
+        let mut xx = false;
+        let mut lt = false;
+        let mut gt = false;
+        let mut ch = false;
+        let mut incr = false;
+        let score = loop {
+            match next_string(&mut iter)?.to_uppercase().as_str() {
+                "NX" => {
+                    nx = true;
+                    continue;
+                }
+                "XX" => {
+                    xx = true;
+                    continue;
+                }
+                "LT" => {
+                    lt = true;
+                    continue;
+                }
+                "GT" => {
+                    gt = true;
+                    continue;
+                }
+                "CH" => {
+                    ch = true;
+                    continue;
+                }
+                "INCR" => {
+                    incr = true;
+                    continue;
+                }
+                s => break s.parse::<f64>().map_err(|_| CommandErr::SyntaxError)?,
+            };
+        };
+
+        // conflict options
+        if nx && xx {
+            return Err(CommandErr::SyntaxError);
+        }
+        if lt && gt {
+            return Err(CommandErr::SyntaxError);
+        }
+
+        let member = next_bytes(&mut iter)?; // member
+
+        let mut zset = vec![(score, member)];
+        while iter.len() > 0 {
+            let score = next_float(&mut iter)?; // score
+            let member = next_bytes(&mut iter)?; // member
+            zset.push((score, member));
+        }
+        Ok(Self::new(key, nx, xx, lt, gt, ch, incr, zset))
+    }
+
+    fn apply(self, db: &mut Database) -> Frame {
+        match db.zadd(
+            &self.key, self.nx, self.xx, self.lt, self.gt, self.ch, self.incr, self.zset,
+        ) {
+            Ok(len) => Frame::Integer(len as i64),
+            Err(e) => match e {
+                crate::db::ExecuteError::WrongType => Frame::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ),
+                crate::db::ExecuteError::OutOfMemory => Frame::Error("Out of memory".to_string()),
+                _ => unreachable!("unexpect zadd error: {:?}", e),
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ZCard {
+    key: String,
+}
+
+impl ZCard {
+    fn new(key: String) -> Self {
+        Self { key }
+    }
+
+    fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+        if frames.len() != 2 {
+            return Err(CommandErr::WrongNumberOfArguments);
+        }
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"ZCARD")?;
+        let key = next_string(&mut iter)?; // key
+        Ok(Self::new(key))
+    }
+
+    fn apply(self, db: &Database) -> Frame {
+        match db.zcard(&self.key) {
+            Ok(len) => Frame::Integer(len as i64),
+            Err(e) => match e {
+                crate::db::ExecuteError::KeyNotFound => Frame::Integer(0),
+                crate::db::ExecuteError::WrongType => Frame::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ),
+                _ => unreachable!("unexpect zcard error: {:?}", e),
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ZRem {
+    key: String,
+    members: Vec<Vec<u8>>,
+}
+
+impl ZRem {
+    fn new(key: String, members: Vec<Vec<u8>>) -> Self {
+        Self { key, members }
+    }
+
+    fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+        if frames.len() < 3 {
+            return Err(CommandErr::WrongNumberOfArguments);
+        }
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"ZREM")?;
+        let key = next_string(&mut iter)?; // key
+        let mut members = vec![];
+        while iter.len() > 0 {
+            let member = next_bytes(&mut iter)?; // member
+            members.push(member);
+        }
+        Ok(Self::new(key, members))
+    }
+
+    fn apply(self, db: &mut Database) -> Frame {
+        match db.zrem(&self.key, self.members) {
+            Ok(len) => Frame::Integer(len as i64),
+            Err(e) => match e {
+                crate::db::ExecuteError::KeyNotFound => Frame::Integer(0),
+                crate::db::ExecuteError::WrongType => Frame::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ),
+                _ => unreachable!("unexpect zrem error: {:?}", e),
+            },
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) struct Flush {}
 
@@ -331,14 +524,25 @@ impl From<std::string::FromUtf8Error> for CommandErr {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum Command {
+    // KV
     Get(Get),
     Set(Set),
-    Del(Del),
-    Expire(Expire),
+
+    // LIST
     LPush(LPush),
     LRange(LRange),
+    // SET
+    ZAdd(ZAdd),
+    ZCard(ZCard),
+    ZRem(ZRem),
+
+    // META
+    Del(Del),
+    Expire(Expire),
+
+    // DB
     Flush(Flush),
 }
 
@@ -357,18 +561,31 @@ impl Command {
         }
         let cmd = frame_to_string(&frame[0])?;
         match cmd.to_uppercase().as_str() {
+            // KV
             "GET" => Ok(Command::Get(Get::from_frames(frame)?)),
             "SET" => Ok(Command::Set(Set::from_frames(frame)?)),
-            "DEL" => Ok(Command::Del(Del::from_frames(frame)?)),
-            "EXPIRE" => Ok(Command::Expire(Expire::from_frames(frame)?)),
+
+            // LIST
             "LPUSH" => Ok(Command::LPush(LPush::from_frames(frame)?)),
             "LRANGE" => Ok(Command::LRange(LRange::from_frames(frame)?)),
+
+            // Sort Set
+            "ZADD" => Ok(Command::ZAdd(ZAdd::from_frames(frame)?)),
+            "ZCARD" => Ok(Command::ZCard(ZCard::from_frames(frame)?)),
+            "ZREM" => Ok(Command::ZRem(ZRem::from_frames(frame)?)),
+
+            // META
+            "DEL" => Ok(Command::Del(Del::from_frames(frame)?)),
+            "EXPIRE" => Ok(Command::Expire(Expire::from_frames(frame)?)),
+
+            // Other
             "FLUSH" => Ok(Command::Flush(Flush::from_frames(frame)?)),
             _ => Err(CommandErr::UnknownCommand),
         }
     }
 
     pub fn apply(db: &mut crate::db::Database, cmd: Self) -> Frame {
+        trace!("apply command: {:?}", cmd);
         match cmd {
             Command::Get(get) => get.apply(db),
             Command::Set(set) => set.apply(db),
@@ -376,6 +593,9 @@ impl Command {
             Command::Expire(expire) => expire.apply(db),
             Command::LPush(lpush) => lpush.apply(db),
             Command::LRange(lrange) => lrange.apply(db),
+            Command::ZAdd(zadd) => zadd.apply(db),
+            Command::ZCard(zcard) => zcard.apply(db),
+            Command::ZRem(zrem) => zrem.apply(db),
             Command::Flush(flush) => flush.apply(db),
         }
     }
@@ -394,6 +614,7 @@ fn next_string(frame: &mut std::vec::IntoIter<Frame>) -> Result<String, CommandE
     match frame.next() {
         Some(Frame::SimpleString(s)) => Ok(s),
         Some(Frame::BulkString(bytes)) => Ok(String::from_utf8(bytes)?),
+        None => Err(CommandErr::WrongNumberOfArguments),
         _ => Err(CommandErr::InvalidProtocol),
     }
 }
@@ -403,6 +624,7 @@ fn next_bytes(frame: &mut std::vec::IntoIter<Frame>) -> Result<Vec<u8>, CommandE
     match frame.next() {
         Some(Frame::SimpleString(s)) => Ok(s.into_bytes()),
         Some(Frame::BulkString(bytes)) => Ok(bytes),
+        None => Err(CommandErr::WrongNumberOfArguments),
         _ => Err(CommandErr::InvalidProtocol),
     }
 }
@@ -411,6 +633,18 @@ fn next_bytes(frame: &mut std::vec::IntoIter<Frame>) -> Result<Vec<u8>, CommandE
 fn next_integer(frame: &mut std::vec::IntoIter<Frame>) -> Result<i64, CommandErr> {
     match frame.next() {
         Some(Frame::Integer(i)) => Ok(i),
+        Some(Frame::SimpleString(s)) => Ok(s.parse::<i64>().unwrap()),
+        None => Err(CommandErr::WrongNumberOfArguments),
+        _ => Err(CommandErr::InvalidProtocol),
+    }
+}
+
+#[inline]
+fn next_float(frame: &mut std::vec::IntoIter<Frame>) -> Result<f64, CommandErr> {
+    match frame.next() {
+        Some(Frame::SimpleString(s)) => Ok(s.parse::<f64>().unwrap()),
+        Some(Frame::BulkString(bytes)) => Ok(String::from_utf8(bytes)?.parse::<f64>().unwrap()),
+        None => Err(CommandErr::WrongNumberOfArguments),
         _ => Err(CommandErr::InvalidProtocol),
     }
 }
@@ -420,6 +654,7 @@ fn check_cmd(frame: &mut std::vec::IntoIter<Frame>, cmd: &[u8]) -> Result<(), Co
     match frame.next() {
         Some(Frame::SimpleString(ref s)) if s.to_ascii_uppercase().as_bytes() == cmd => Ok(()),
         Some(Frame::BulkString(ref s)) if s.to_ascii_uppercase() == cmd => Ok(()),
+        None => Err(CommandErr::WrongNumberOfArguments),
         _ => Err(CommandErr::InvalidProtocol),
     }
 }
@@ -508,11 +743,56 @@ mod tests {
     }
 
     #[test]
+    fn test_zadd() {
+        let mut db = Database::new();
+        let cmd = Command::from_frames(vec![
+            Frame::BulkString(b"zadd".to_vec()),
+            Frame::BulkString(b"key".to_vec()),
+            Frame::BulkString(b"1".to_vec()),
+            Frame::BulkString(b"one".to_vec()),
+        ])
+        .unwrap();
+        let result = Command::apply(&mut db, cmd);
+        assert_eq!(result, Frame::Integer(1));
+    }
+
+    #[test]
+    fn test_zcard() {
+        let mut db = Database::new();
+        let cmd = Command::from_frames(vec![
+            Frame::BulkString(b"zcard".to_vec()),
+            Frame::BulkString(b"key".to_vec()),
+        ])
+        .unwrap();
+        let result = Command::apply(&mut db, cmd);
+        assert_eq!(result, Frame::Integer(0));
+    }
+
+    #[test]
+    fn test_zrem() {
+        let mut db = Database::new();
+        let cmd = Command::from_frames(vec![
+            Frame::BulkString(b"zrem".to_vec()),
+            Frame::BulkString(b"key".to_vec()),
+            Frame::BulkString(b"one".to_vec()),
+        ])
+        .unwrap();
+        let result = Command::apply(&mut db, cmd);
+        assert_eq!(result, Frame::Integer(0));
+    }
+
+    #[test]
     fn test_flush() {
         let mut db = Database::new();
         let cmd = Command::from_frames(vec![Frame::BulkString(b"flush".to_vec())]);
-        assert_eq!(cmd, Ok(Command::Flush(Flush {})));
+        assert_eq!(cmd.is_ok(), true);
         let cmd = cmd.unwrap();
+
+        match cmd {
+            Command::Flush(_) => {}
+            _ => panic!("expect flush"),
+        }
+
         let result = Command::apply(&mut db, cmd);
         assert_eq!(result, Frame::SimpleString("OK".to_string()));
     }

@@ -1,4 +1,4 @@
-use log::trace;
+use log::{debug, trace};
 
 use crate::data::Value;
 
@@ -17,13 +17,13 @@ pub enum ExecuteError {
     OutOfMemory,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Entry {
     value: Value,
     expire_at: Option<Instant>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Database {
     pub table: HashMap<String, Entry>,
 }
@@ -171,6 +171,80 @@ impl Database {
         }
     }
 
+    pub fn zadd(
+        &mut self,
+        key: &str,
+        nx: bool,
+        xx: bool,
+        lt: bool,
+        gt: bool,
+        ch: bool,
+        incr: bool,
+        zset: Vec<(f64, Bytes)>,
+    ) -> Result<usize, ExecuteError> {
+        let entry = self.table.get_mut(key);
+        match entry {
+            Some(entry) => {
+                if !entry.value.is_zset() {
+                    return Err(ExecuteError::WrongType);
+                }
+                let mut value_len = 0;
+                let value = entry.value.as_zset_mut().unwrap();
+                for (score, member) in zset {
+                    value_len += value.zadd(nx, xx, lt, gt, ch, incr, score, member);
+                }
+                Ok(value_len)
+            }
+            None => {
+                let mut value = crate::data::ZSet::new();
+                let value_len = zset.len();
+                for (score, member) in zset {
+                    value.zadd(nx, xx, lt, gt, ch, incr, score, member);
+                }
+                let entry = Entry {
+                    value: Value::ZSet(value),
+                    expire_at: None,
+                };
+                self.table.insert(key.to_string(), entry);
+                Ok(value_len)
+            }
+        }
+    }
+
+    pub fn zcard(&self, key: &str) -> Result<usize, ExecuteError> {
+        let entry = self.table.get(key);
+        match entry {
+            Some(entry) => {
+                if !entry.value.is_zset() {
+                    return Err(ExecuteError::WrongType);
+                }
+
+                Ok(entry.value.as_zset().unwrap().len())
+            }
+            None => Err(ExecuteError::KeyNotFound),
+        }
+    }
+
+    pub fn zrem(&mut self, key: &str, members: Vec<Bytes>) -> Result<usize, ExecuteError> {
+        let entry = self.table.get_mut(key);
+        match entry {
+            Some(entry) => {
+                if !entry.value.is_zset() {
+                    return Err(ExecuteError::WrongType);
+                }
+                let mut value_len = 0;
+                let value = entry.value.as_zset_mut().unwrap();
+                for member in members {
+                    if value.remove(&member) {
+                        value_len += 1;
+                    }
+                }
+                Ok(value_len)
+            }
+            None => Err(ExecuteError::KeyNotFound),
+        }
+    }
+
     pub fn flush(&mut self) {
         self.table.clear();
     }
@@ -221,5 +295,89 @@ mod tests {
         assert_eq!(db.get(&key), Ok(val));
         std::thread::sleep(Duration::from_secs(2));
         assert_eq!(db.get(&key), Err(ExecuteError::KeyNotFound));
+    }
+
+    #[test]
+    fn test_zadd() {
+        let key = "key".to_string();
+        let mut db = Database::new();
+        let res = db.zadd(
+            &key,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            vec![(1.0, b"one".to_vec())],
+        );
+        debug!("{}", db.table.get(&key).unwrap().value);
+        assert_eq!(res, Ok(1));
+
+        let res = db.zadd(
+            &key,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            vec![(2.0, b"one".to_vec()), (2.0, b"two".to_vec())],
+        );
+        debug!("{}", db.table.get(&key).unwrap().value);
+        assert_eq!(res, Ok(1));
+
+        let res = db.zadd(
+            &key,
+            false,
+            true,
+            false,
+            false,
+            true,
+            false,
+            vec![(3.0, b"two".to_vec()), (3.0, b"three".to_vec())],
+        );
+
+        debug!("{}", db.table.get(&key).unwrap().value);
+        assert_eq!(res, Ok(1));
+
+        let res = db.zadd(
+            &key,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            vec![(1.0, b"two".to_vec()), (3.0, b"three".to_vec())],
+        );
+        debug!("{}", db.table.get(&key).unwrap().value);
+        assert_eq!(res, Ok(2));
+
+        let res = db.zadd(
+            &key,
+            false,
+            false,
+            false,
+            true,
+            true,
+            false,
+            vec![(2.0, b"two".to_vec()), (4.0, b"four".to_vec())],
+        );
+        debug!("{}", db.table.get(&key).unwrap().value);
+        assert_eq!(res, Ok(2));
+
+        let res = db.zadd(
+            &key,
+            false,
+            false,
+            false,
+            false,
+            true,
+            true,
+            vec![(1.0, b"one".to_vec()), (5.0, b"five".to_vec())],
+        );
+        debug!("{}", db.table.get(&key).unwrap().value);
+        assert_eq!(res, Ok(2));
     }
 }
