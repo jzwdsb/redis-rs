@@ -325,11 +325,12 @@ mod tests {
     fn test_expire() {
         let key = "key".to_string();
         let val = b"value".to_vec();
+        let expire_from_now = Duration::from_secs(10);
         let mut db = Database::new();
-        let res = db.set(key.clone(), val.clone(), false, false, false, false, None);
+        let res = db.set(key.clone(), val.clone(), false, false, false, false, Some(SystemTime::now()+expire_from_now));
         assert_eq!(res, Ok(None));
         assert_eq!(db.get(&key), Ok(val));
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(expire_from_now);
         assert_eq!(db.get(&key), Err(ExecuteError::KeyNotFound));
     }
 
