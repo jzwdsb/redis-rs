@@ -8,7 +8,11 @@
 use log::trace;
 
 use crate::{db::Database, frame::Frame};
-use std::{fmt::Display, time::Duration};
+use std::{
+    fmt::Display,
+    time::{Duration, SystemTime, UNIX_EPOCH}
+};
+
 
 #[derive(Debug, PartialEq)]
 
@@ -52,27 +56,84 @@ impl Get {
 pub(crate) struct Set {
     key: String,
     value: Vec<u8>,
-    expire: Option<Duration>,
+    nx: bool,
+    xx: bool,
+    get: bool,
+    ex: Option<Duration>,
+    exat: Option<SystemTime>,
+    keepttl: bool,
 }
 
 impl Set {
     #[allow(dead_code)]
-    fn new(key: String, value: Vec<u8>, expire: Option<Duration>) -> Self {
-        Self { key, value, expire }
+    fn new(
+        key: String,
+        value: Vec<u8>,
+        nx: bool,
+        xx: bool,
+        get: bool,
+        ex: Option<Duration>,
+        exat: Option<SystemTime>,
+        keepttl: bool,
+    ) -> Self {
+        Self {
+            key,
+            value,
+            nx,
+            xx,
+            get,
+            ex,
+            exat,
+            keepttl,
+        }
     }
 
+    // SET key value [NX] [XX] [GET] [EX <seconds>] [PX <milliseconds>] [KEEPTTL]
     fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"SET")?;
 
         let key = next_string(&mut iter)?; // key
         let value = next_bytes(&mut iter)?; // value
-        let expire: Option<Duration> = match iter.next() {
-            Some(Frame::Integer(i)) if i > 0 => Some(Duration::from_secs(i as u64)),
-            _ => None,
-        };
+        let (mut nx, mut xx, mut get, mut keepttl) = (false, false, false, false);
+        let (mut ex, mut exat) = (None, None);
+        while iter.len() > 0 {
+            let next_opt = next_string(&mut iter)?;
+            match next_opt.to_ascii_uppercase().as_str() {
+                "NX" => nx = true,
+                "XX" => xx = true,
+                "GET" => get = true,
+                "KEEPTTL" => keepttl = true,
+                "EX" => {
+                    ex = Some(Duration::from_secs(next_integer(&mut iter)? as u64));
+                }
+                "PX" => {
+                    ex = Some(Duration::from_millis(next_integer(&mut iter)? as u64));
+                }
+                "EXAT" => {
+                    exat = Some(UNIX_EPOCH+Duration::from_secs(next_integer(&mut iter)? as u64));
+                }
+                "PXAT" => {
+                    exat = Some(UNIX_EPOCH+Duration::from_millis(next_integer(&mut iter)? as u64));
+                }
+                _ => {
+                    return Err(CommandErr::SyntaxError);
+                }
+            }
+        }
 
-        Ok(Self { key, value, expire })
+        if nx && xx {
+            return Err(CommandErr::SyntaxError)
+        }
+        if ex.is_some() && exat.is_some() {
+            return Err(CommandErr::SyntaxError)
+        }
+        if keepttl && (ex.is_some() || exat.is_some()) {
+            return Err(CommandErr::SyntaxError)
+        }
+
+
+        Ok(Self::new(key, value, nx, xx, get, ex, exat, keepttl))
     }
 
     #[allow(dead_code)]
@@ -85,19 +146,19 @@ impl Set {
         &self.value
     }
 
-    #[allow(dead_code)]
-    fn expire(&self) -> &Option<Duration> {
-        &self.expire
-    }
+    
 
     fn apply(self, db: &mut Database) -> Frame {
-        let expire_at = match self.expire {
-            Some(duration) => Some(std::time::Instant::now() + duration),
-            None => None,
+        let expire_at = match (self.ex, self.exat) {
+            (Some(d), None) => Some(SystemTime::now() + d),
+            (None, Some(t)) => Some(t),
+            _ => None,
         };
-        match db.set(self.key, self.value, expire_at) {
-            Ok(_) => Frame::SimpleString("OK".to_string()),
+        match db.set(self.key, self.value, self.nx, self.xx, self.get, self.keepttl, expire_at) {
+            Ok(Some(value)) => Frame::BulkString(value),
+            Ok(None) => Frame::SimpleString("OK".to_string()),
             Err(e) => match e {
+                crate::db::ExecuteError::NoAction => Frame::Nil,
                 crate::db::ExecuteError::WrongType => Frame::Error(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
@@ -169,7 +230,7 @@ impl Expire {
     }
 
     fn apply(self, db: &mut Database) -> Frame {
-        let expire_at = std::time::Instant::now() + self.expire;
+        let expire_at = SystemTime::now() + self.expire;
         match db.expire(&self.key, expire_at) {
             Ok(()) => Frame::Integer(1),
             Err(e) => match e {

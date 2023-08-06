@@ -1,10 +1,10 @@
-use log::{debug, trace};
+use log::trace;
 
 use crate::data::Value;
 
 use std::{
     collections::{HashMap, VecDeque},
-    time::Instant,
+    time::SystemTime,
 };
 
 type Bytes = Vec<u8>;
@@ -12,6 +12,7 @@ type Bytes = Vec<u8>;
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum ExecuteError {
+    NoAction,
     WrongType,
     KeyNotFound,
     OutOfMemory,
@@ -20,7 +21,7 @@ pub enum ExecuteError {
 #[derive(Debug)]
 pub struct Entry {
     value: Value,
-    expire_at: Option<Instant>,
+    expire_at: Option<SystemTime>,
 }
 
 #[derive(Debug)]
@@ -42,7 +43,7 @@ impl Database {
             Some(entry) => {
                 // check expire on read
                 if let Some(expire_at) = entry.expire_at {
-                    if expire_at < Instant::now() {
+                    if expire_at < SystemTime::now() {
                         self.table.remove(key);
                         return Err(ExecuteError::KeyNotFound);
                     }
@@ -60,31 +61,48 @@ impl Database {
         &mut self,
         key: String,
         value: Bytes,
-        expire_at: Option<Instant>,
-    ) -> Result<(), ExecuteError> {
+        nx: bool,
+        xx: bool,
+        get: bool,
+        keepttl: bool,
+        expire_at: Option<SystemTime>,
+    ) -> Result<Option<Bytes>, ExecuteError> {
         trace!(
-            "Set key: {}, value: {:?}, expire_at: {:?}",
+            "Set key: {}, value: {:?}, nx: {}, xx: {}, get: {}, keepttl: {}, expire_at: {:?}",
             key,
             value,
+            nx,
+            xx,
+            get,
+            keepttl,
             expire_at
         );
-        let entry = Entry {
+        let mut entry = Entry {
             value: Value::KV(value),
             expire_at: expire_at,
         };
-        if self.table.contains_key(&key) {
-            let old_ent = self.table.get(&key).unwrap();
-            if !old_ent.value.is_kv() {
-                return Err(ExecuteError::WrongType);
-            }
-            self.table.insert(key, entry);
-            return Ok(());
+        let old = self.table.get(&key);
+        if old.is_some() && !old.as_ref().unwrap().value.is_kv() {
+            return Err(ExecuteError::WrongType);
         }
-        self.table.insert(key, entry);
-        Ok(())
+        if nx && old.is_some() {
+            return Err(ExecuteError::NoAction);
+        }
+        if xx && old.is_none() {
+            return Err(ExecuteError::NoAction);
+        }
+        if keepttl && old.is_some() {
+            entry.expire_at = old.unwrap().expire_at;
+        }
+
+        let old = self.table.insert(key, entry);
+        if get && old.is_some() {
+            return Ok(Some(old.unwrap().value.as_kv().unwrap()));
+        }
+        Ok(None)
     }
 
-    pub fn expire(&mut self, key: &str, expire_at: Instant) -> Result<(), ExecuteError> {
+    pub fn expire(&mut self, key: &str, expire_at: SystemTime) -> Result<(), ExecuteError> {
         let entry = self.table.get_mut(key);
         match entry {
             Some(entry) => {
@@ -219,7 +237,7 @@ impl Database {
                     return Err(ExecuteError::WrongType);
                 }
 
-                Ok(entry.value.as_zset().unwrap().len())
+                Ok(entry.value.as_zset_ref().unwrap().len())
             }
             None => Err(ExecuteError::KeyNotFound),
         }
@@ -261,12 +279,34 @@ mod tests {
         let key = "key".to_string();
         let val = b"value".to_vec();
         let mut db = Database::new();
-        let res = db.set(key.clone(), val.clone(), None);
-        assert_eq!(res, Ok(()));
+        let res = db.set(key.clone(), val.clone(), false, false, false, false, None);
+        assert_eq!(res, Ok(None));
         assert_eq!(db.get(&key), Ok(val.clone()));
         db.table.get_mut(&key).unwrap().value = Value::List(VecDeque::new());
-        let res = db.set(key, val, None);
+        let res = db.set(key.clone(), val.clone(), false, false, false, false, None);
         assert_eq!(res, Err(ExecuteError::WrongType));
+        db.table.remove(&key);
+        let res = db.set(key.clone(), val.clone(), false, true, false, false, None);
+        assert_eq!(res, Err(ExecuteError::NoAction));
+        assert_eq!(db.table.contains_key(&key), false);
+        let res = db.set(key.clone(), val.clone(), true, false, false, false, None);
+        assert_eq!(res, Ok(None));
+        assert_eq!(db.table.get(&key).unwrap().value.as_kv_ref().unwrap().clone(), val.clone());
+
+        let res = db.set(key.clone(), b"new_val".to_vec(), false, false, true, false, None);
+        assert_eq!(res, Ok(Some(val.clone())));
+        assert_eq!(db.table.get(&key).unwrap().value.as_kv_ref().unwrap().clone(), b"new_val".to_vec());
+        
+        let res = db.set(key.clone(), b"new_val".to_vec(), false, false, false, false, Some(SystemTime::now()+Duration::from_secs(60)));
+        assert_eq!(res, Ok(None));
+        assert_eq!(db.table.get(&key).unwrap().expire_at.is_some(), true);
+        
+        let _res = db.set(key.clone(), val.clone(), false, false, false, false, None);
+        assert_eq!(db.table.get(&key).unwrap().expire_at.is_some(), false);
+        db.table.get_mut(&key).unwrap().expire_at = Some(SystemTime::now()+Duration::from_secs(60));
+        let res = db.set(key.clone(), val.clone(), false, false, false, true, None);
+        assert_eq!(res, Ok(None));
+        assert_eq!(db.table.get(&key).unwrap().expire_at.is_some(), true);
     }
 
     #[test]
@@ -274,8 +314,8 @@ mod tests {
         let key = "key".to_string();
         let val = b"value".to_vec();
         let mut db = Database::new();
-        let res = db.set(key.clone(), val, None);
-        assert_eq!(res, Ok(()));
+        let res = db.set(key.clone(), val, false, false, false, false, None);
+        assert_eq!(res, Ok(None));
 
         db.del(&key);
         assert_eq!(db.get(&key), Err(ExecuteError::KeyNotFound));
@@ -286,12 +326,8 @@ mod tests {
         let key = "key".to_string();
         let val = b"value".to_vec();
         let mut db = Database::new();
-        let res = db.set(
-            key.clone(),
-            val.clone(),
-            Some(Instant::now() + Duration::from_secs(1)),
-        );
-        assert_eq!(res, Ok(()));
+        let res = db.set(key.clone(), val.clone(), false, false, false, false, None);
+        assert_eq!(res, Ok(None));
         assert_eq!(db.get(&key), Ok(val));
         std::thread::sleep(Duration::from_secs(2));
         assert_eq!(db.get(&key), Err(ExecuteError::KeyNotFound));
@@ -311,7 +347,7 @@ mod tests {
             false,
             vec![(1.0, b"one".to_vec())],
         );
-        debug!("{}", db.table.get(&key).unwrap().value);
+        println!("{}", db.table.get(&key).unwrap().value);
         assert_eq!(res, Ok(1));
 
         let res = db.zadd(
@@ -324,7 +360,7 @@ mod tests {
             false,
             vec![(2.0, b"one".to_vec()), (2.0, b"two".to_vec())],
         );
-        debug!("{}", db.table.get(&key).unwrap().value);
+        println!("{}", db.table.get(&key).unwrap().value);
         assert_eq!(res, Ok(1));
 
         let res = db.zadd(
@@ -338,7 +374,7 @@ mod tests {
             vec![(3.0, b"two".to_vec()), (3.0, b"three".to_vec())],
         );
 
-        debug!("{}", db.table.get(&key).unwrap().value);
+        println!("{}", db.table.get(&key).unwrap().value);
         assert_eq!(res, Ok(1));
 
         let res = db.zadd(
@@ -351,7 +387,7 @@ mod tests {
             false,
             vec![(1.0, b"two".to_vec()), (3.0, b"three".to_vec())],
         );
-        debug!("{}", db.table.get(&key).unwrap().value);
+        println!("{}", db.table.get(&key).unwrap().value);
         assert_eq!(res, Ok(2));
 
         let res = db.zadd(
@@ -364,7 +400,7 @@ mod tests {
             false,
             vec![(2.0, b"two".to_vec()), (4.0, b"four".to_vec())],
         );
-        debug!("{}", db.table.get(&key).unwrap().value);
+        println!("{}", db.table.get(&key).unwrap().value);
         assert_eq!(res, Ok(2));
 
         let res = db.zadd(
@@ -377,7 +413,7 @@ mod tests {
             true,
             vec![(1.0, b"one".to_vec()), (5.0, b"five".to_vec())],
         );
-        debug!("{}", db.table.get(&key).unwrap().value);
+        println!("{}", db.table.get(&key).unwrap().value);
         assert_eq!(res, Ok(2));
     }
 }

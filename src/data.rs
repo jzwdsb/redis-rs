@@ -194,7 +194,15 @@ impl Value {
     }
 
     #[allow(dead_code)]
-    pub fn as_kv(&self) -> Option<&Bytes> {
+    pub fn as_kv(self) -> Option<Bytes> {
+        match self {
+            Value::KV(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_kv_ref(&self) -> Option<&Bytes> {
         match self {
             Value::KV(v) => Some(v),
             _ => None,
@@ -210,7 +218,15 @@ impl Value {
     }
 
     #[allow(dead_code)]
-    pub fn as_list(&self) -> Option<&VecDeque<Bytes>> {
+    pub fn as_list(self) -> Option<VecDeque<Bytes>> {
+        match self {
+            Value::List(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_list_ref(&self) -> Option<&VecDeque<Bytes>> {
         match self {
             Value::List(v) => Some(v),
             _ => None,
@@ -226,7 +242,15 @@ impl Value {
     }
 
     #[allow(dead_code)]
-    pub fn as_set(&self) -> Option<&HashSet<Bytes>> {
+    pub fn as_set(self) -> Option<HashSet<Bytes>> {
+        match self {
+            Value::Set(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_set_ref(&self) -> Option<&HashSet<Bytes>> {
         match self {
             Value::Set(v) => Some(v),
             _ => None,
@@ -242,7 +266,15 @@ impl Value {
     }
 
     #[allow(dead_code)]
-    pub fn as_hash(&self) -> Option<&HashMap<Bytes, Bytes>> {
+    pub fn as_hash(self) -> Option<HashMap<Bytes, Bytes>> {
+        match self {
+            Value::Hash(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_hash_ref(&self) -> Option<&HashMap<Bytes, Bytes>> {
         match self {
             Value::Hash(v) => Some(v),
             _ => None,
@@ -258,7 +290,15 @@ impl Value {
     }
 
     #[allow(dead_code)]
-    pub fn as_zset(&self) -> Option<&ZSet> {
+    pub fn as_zset(self) -> Option<ZSet> {
+        match self {
+            Value::ZSet(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_zset_ref(&self) -> Option<&ZSet> {
         match self {
             Value::ZSet(v) => Some(v),
             _ => None,
