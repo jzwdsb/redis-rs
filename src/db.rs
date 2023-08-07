@@ -4,7 +4,7 @@ use crate::data::Value;
 
 use std::{
     collections::{HashMap, VecDeque},
-    time::SystemTime,
+    time::SystemTime
 };
 
 type Bytes = Vec<u8>;
@@ -27,12 +27,14 @@ pub struct Entry {
 #[derive(Debug)]
 pub struct Database {
     pub table: HashMap<String, Entry>,
+    pub expire_table: HashMap<String, SystemTime>,
 }
 
 impl Database {
     pub fn new() -> Self {
         Self {
             table: HashMap::new(),
+            expire_table: HashMap::new(),
         }
     }
 
@@ -45,6 +47,7 @@ impl Database {
                 if let Some(expire_at) = entry.expire_at {
                     if expire_at < SystemTime::now() {
                         self.table.remove(key);
+                        self.expire_table.remove(key);
                         return Err(ExecuteError::KeyNotFound);
                     }
                 }
@@ -94,6 +97,9 @@ impl Database {
         if keepttl && old.is_some() {
             entry.expire_at = old.unwrap().expire_at;
         }
+        if entry.expire_at.is_some() {
+            self.expire_table.insert(key.clone(), entry.expire_at.unwrap());
+        }
 
         let old = self.table.insert(key, entry);
         if get && old.is_some() {
@@ -107,6 +113,7 @@ impl Database {
         match entry {
             Some(entry) => {
                 entry.expire_at = Some(expire_at);
+                self.expire_table.insert(key.to_string(), expire_at);
                 Ok(())
             }
             None => Err(ExecuteError::KeyNotFound),
@@ -115,6 +122,7 @@ impl Database {
 
     pub fn del(&mut self, key: &str) -> Option<Value> {
         trace!("Del key: {}", key);
+        self.expire_table.remove(key);
         self.table.remove(key).map(|entry| entry.value)
     }
 

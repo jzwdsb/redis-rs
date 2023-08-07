@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::ErrorKind;
+use std::time::{Duration, SystemTime};
 
 use crate::cmd::Command;
 use crate::db::Database;
@@ -80,7 +81,10 @@ impl Server {
     }
 
     pub fn handle_event(&mut self) {
-        self.poll.poll(&mut self.events, None).unwrap();
+        let mut busy = false;
+        self.poll
+            .poll(&mut self.events, Some(Duration::from_millis(100)))
+            .unwrap();
         for event in self.events.iter() {
             match event.token() {
                 // handle new connection
@@ -101,6 +105,7 @@ impl Server {
                     }
                 },
                 token if event.is_readable() => {
+                    busy = true;
                     let req_bytes = read_request(&mut self.sockets.get_mut(&token).unwrap());
                     let req_bytes = match req_bytes {
                         Ok(req_bytes) => {
@@ -172,9 +177,14 @@ impl Server {
                     let resp = Command::apply(&mut self.db, command);
                     trace!("Apply command from token {:?}: {:?}", token, resp);
 
-                    self.response.insert(token, resp.serialize());
+                    // append response to the response buffer
+                    self.response
+                        .entry(token)
+                        .or_insert_with(Vec::new)
+                        .extend(resp.serialize());
                 }
                 token if event.is_writable() => {
+                    busy = true;
                     if self.response.contains_key(&token) {
                         let resp_bytes = self.response.remove(&token).unwrap();
                         let sent = write_response(
@@ -182,19 +192,18 @@ impl Server {
                             resp_bytes.as_slice(),
                         );
                         match sent {
+                            Ok(len) if len == resp_bytes.len() => {
+                                self.poll
+                                    .registry()
+                                    .reregister(
+                                        self.sockets.get_mut(&token).unwrap(),
+                                        token,
+                                        Interest::READABLE,
+                                    )
+                                    .unwrap();
+                            }
                             Ok(len) => {
-                                if len == resp_bytes.len() {
-                                    self.poll
-                                        .registry()
-                                        .reregister(
-                                            self.sockets.get_mut(&token).unwrap(),
-                                            token,
-                                            Interest::READABLE,
-                                        )
-                                        .unwrap();
-                                } else {
-                                    self.response.insert(token, resp_bytes[len..].to_vec());
-                                }
+                                self.response.insert(token, resp_bytes[len..].to_vec());
                             }
                             Err(e) => {
                                 warn!("Failed to send response: {}", e);
@@ -203,6 +212,29 @@ impl Server {
                     }
                 }
                 _ => unreachable!(),
+            }
+        }
+        if !busy {
+            self.idle();
+        }
+    }
+
+    pub fn idle(&mut self) {
+        // check if there is any request not completed and break when timeout
+        let start_time = SystemTime::now();
+        for (_token, _req_bytes) in self.requests.iter() {
+            if start_time.elapsed().unwrap() > Duration::from_millis(100) {
+                return;
+            }
+        }
+
+        // check expired key
+        for (key, expire_at) in self.db.expire_table.clone() {
+            if start_time.elapsed().unwrap() > Duration::from_millis(100) {
+                return;
+            }
+            if expire_at < SystemTime::now() {
+                self.db.del(&key);
             }
         }
     }
