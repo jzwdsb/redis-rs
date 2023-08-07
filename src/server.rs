@@ -6,18 +6,17 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::io::ErrorKind;
 
+use crate::cmd::Command;
 use crate::db::Database;
 use crate::err::ServerErr;
 use crate::frame::Frame;
 use crate::helper::{bytes_to_printable_string, read_request, write_response};
-use crate::cmd::Command;
 
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
-
 
 // Server is the main struct of the server
 // data retrieval and storage are done through the server
@@ -172,7 +171,7 @@ impl Server {
                     };
                     let resp = Command::apply(&mut self.db, command);
                     trace!("Apply command from token {:?}: {:?}", token, resp);
-                    
+
                     self.response.insert(token, resp.serialize());
                 }
                 token if event.is_writable() => {

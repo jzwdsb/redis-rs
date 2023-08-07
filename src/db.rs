@@ -291,19 +291,54 @@ mod tests {
         assert_eq!(db.table.contains_key(&key), false);
         let res = db.set(key.clone(), val.clone(), true, false, false, false, None);
         assert_eq!(res, Ok(None));
-        assert_eq!(db.table.get(&key).unwrap().value.as_kv_ref().unwrap().clone(), val.clone());
+        assert_eq!(
+            db.table
+                .get(&key)
+                .unwrap()
+                .value
+                .as_kv_ref()
+                .unwrap()
+                .clone(),
+            val.clone()
+        );
 
-        let res = db.set(key.clone(), b"new_val".to_vec(), false, false, true, false, None);
+        let res = db.set(
+            key.clone(),
+            b"new_val".to_vec(),
+            false,
+            false,
+            true,
+            false,
+            None,
+        );
         assert_eq!(res, Ok(Some(val.clone())));
-        assert_eq!(db.table.get(&key).unwrap().value.as_kv_ref().unwrap().clone(), b"new_val".to_vec());
-        
-        let res = db.set(key.clone(), b"new_val".to_vec(), false, false, false, false, Some(SystemTime::now()+Duration::from_secs(60)));
+        assert_eq!(
+            db.table
+                .get(&key)
+                .unwrap()
+                .value
+                .as_kv_ref()
+                .unwrap()
+                .clone(),
+            b"new_val".to_vec()
+        );
+
+        let res = db.set(
+            key.clone(),
+            b"new_val".to_vec(),
+            false,
+            false,
+            false,
+            false,
+            Some(SystemTime::now() + Duration::from_secs(60)),
+        );
         assert_eq!(res, Ok(None));
         assert_eq!(db.table.get(&key).unwrap().expire_at.is_some(), true);
-        
+
         let _res = db.set(key.clone(), val.clone(), false, false, false, false, None);
         assert_eq!(db.table.get(&key).unwrap().expire_at.is_some(), false);
-        db.table.get_mut(&key).unwrap().expire_at = Some(SystemTime::now()+Duration::from_secs(60));
+        db.table.get_mut(&key).unwrap().expire_at =
+            Some(SystemTime::now() + Duration::from_secs(60));
         let res = db.set(key.clone(), val.clone(), false, false, false, true, None);
         assert_eq!(res, Ok(None));
         assert_eq!(db.table.get(&key).unwrap().expire_at.is_some(), true);
@@ -327,7 +362,15 @@ mod tests {
         let val = b"value".to_vec();
         let expire_from_now = Duration::from_secs(10);
         let mut db = Database::new();
-        let res = db.set(key.clone(), val.clone(), false, false, false, false, Some(SystemTime::now()+expire_from_now));
+        let res = db.set(
+            key.clone(),
+            val.clone(),
+            false,
+            false,
+            false,
+            false,
+            Some(SystemTime::now() + expire_from_now),
+        );
         assert_eq!(res, Ok(None));
         assert_eq!(db.get(&key), Ok(val));
         std::thread::sleep(expire_from_now);

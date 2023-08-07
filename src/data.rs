@@ -2,7 +2,10 @@
 //! All Redis data types are defined in this document: https://redis.io/topics/data-types-intro
 //! We start implementing the most common data types: String, List, Set, Hash, ZSet
 
-use std::{collections::{HashMap, HashSet, VecDeque}, fmt::{Display, Formatter}};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt::{Display, Formatter},
+};
 
 type Bytes = Vec<u8>;
 
@@ -40,7 +43,12 @@ impl Ord for Z {
 
 impl Display for Z {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.score, String::from_utf8_lossy(&self.member))
+        write!(
+            f,
+            "{}:{}",
+            self.score,
+            String::from_utf8_lossy(&self.member)
+        )
     }
 }
 
@@ -63,10 +71,10 @@ impl ZSet {
 
     pub fn zadd(
         &mut self,
-        nx: bool, // Only set the key if it does not already exist.
-        xx: bool, // Only set the key if it already exist.
-        lt: bool, // Only set the key if its score is less than the score of the key.
-        gt: bool, // Only set the key if its score is greater than the score of the key.
+        nx: bool,   // Only set the key if it does not already exist.
+        xx: bool,   // Only set the key if it already exist.
+        lt: bool,   // Only set the key if its score is less than the score of the key.
+        gt: bool,   // Only set the key if its score is greater than the score of the key.
         ch: bool, // Modify the return value from the number of new elements added, to the total number of elements changed
         incr: bool, // When this option is specified ZADD acts like ZINCRBY
         score: f64,
@@ -94,14 +102,11 @@ impl ZSet {
         if gt && z.score <= *value {
             return 0;
         }
-        
-        
-        
+
         // no value change
         if *value == z.score && !incr {
             return 0;
         }
-        
 
         if incr {
             let score = self.hmap.get_mut(&z.member).unwrap();
@@ -345,7 +350,12 @@ impl Display for Value {
                     if i != 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}:{}", String::from_utf8_lossy(k), String::from_utf8_lossy(v))?;
+                    write!(
+                        f,
+                        "{}:{}",
+                        String::from_utf8_lossy(k),
+                        String::from_utf8_lossy(v)
+                    )?;
                 }
                 write!(f, "}}")
             }

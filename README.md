@@ -12,4 +12,5 @@ There are many redis server implement in rust and much better than this project.
 - Full test coverage
 - Full documentation
 - High performance
+- Multi Thread and concurrent safe
 - no unsafe code

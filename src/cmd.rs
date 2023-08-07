@@ -10,9 +10,8 @@ use log::trace;
 use crate::{db::Database, frame::Frame};
 use std::{
     fmt::Display,
-    time::{Duration, SystemTime, UNIX_EPOCH}
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
-
 
 #[derive(Debug, PartialEq)]
 
@@ -111,10 +110,11 @@ impl Set {
                     ex = Some(Duration::from_millis(next_integer(&mut iter)? as u64));
                 }
                 "EXAT" => {
-                    exat = Some(UNIX_EPOCH+Duration::from_secs(next_integer(&mut iter)? as u64));
+                    exat = Some(UNIX_EPOCH + Duration::from_secs(next_integer(&mut iter)? as u64));
                 }
                 "PXAT" => {
-                    exat = Some(UNIX_EPOCH+Duration::from_millis(next_integer(&mut iter)? as u64));
+                    exat =
+                        Some(UNIX_EPOCH + Duration::from_millis(next_integer(&mut iter)? as u64));
                 }
                 _ => {
                     return Err(CommandErr::SyntaxError);
@@ -123,15 +123,14 @@ impl Set {
         }
 
         if nx && xx {
-            return Err(CommandErr::SyntaxError)
+            return Err(CommandErr::SyntaxError);
         }
         if ex.is_some() && exat.is_some() {
-            return Err(CommandErr::SyntaxError)
+            return Err(CommandErr::SyntaxError);
         }
         if keepttl && (ex.is_some() || exat.is_some()) {
-            return Err(CommandErr::SyntaxError)
+            return Err(CommandErr::SyntaxError);
         }
-
 
         Ok(Self::new(key, value, nx, xx, get, ex, exat, keepttl))
     }
@@ -146,15 +145,21 @@ impl Set {
         &self.value
     }
 
-    
-
     fn apply(self, db: &mut Database) -> Frame {
         let expire_at = match (self.ex, self.exat) {
             (Some(d), None) => Some(SystemTime::now() + d),
             (None, Some(t)) => Some(t),
             _ => None,
         };
-        match db.set(self.key, self.value, self.nx, self.xx, self.get, self.keepttl, expire_at) {
+        match db.set(
+            self.key,
+            self.value,
+            self.nx,
+            self.xx,
+            self.get,
+            self.keepttl,
+            expire_at,
+        ) {
             Ok(Some(value)) => Frame::BulkString(value),
             Ok(None) => Frame::SimpleString("OK".to_string()),
             Err(e) => match e {
