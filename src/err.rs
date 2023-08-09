@@ -6,6 +6,7 @@ pub enum ServerErr {
     WrongType,
     SyntaxError,
     IOError(String),
+    PollError,
     NoKey,
     NoValue,
 }

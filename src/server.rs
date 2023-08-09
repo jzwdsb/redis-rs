@@ -82,9 +82,8 @@ impl Server {
 
     pub fn handle_event(&mut self) {
         let mut busy = false;
-        self.poll
-            .poll(&mut self.events, Some(Duration::from_millis(100)))
-            .unwrap();
+        self.poll(Some(Duration::from_millis(100))).unwrap();
+        
         for event in self.events.iter() {
             match event.token() {
                 // handle new connection
@@ -219,7 +218,13 @@ impl Server {
         }
     }
 
-    pub fn idle(&mut self) {
+    fn poll(&mut self, timeout: Option<Duration>) -> Result<(), ServerErr> {
+        self.poll
+            .poll(&mut self.events, timeout)
+            .map_err(|_| ServerErr::PollError)
+    }
+
+    fn idle(&mut self) {
         // check if there is any request not completed and break when timeout
         let start_time = SystemTime::now();
         for (_token, _req_bytes) in self.requests.iter() {
