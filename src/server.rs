@@ -83,7 +83,7 @@ impl Server {
     pub fn handle_event(&mut self) {
         let mut busy = false;
         self.poll(Some(Duration::from_millis(100))).unwrap();
-        
+
         for event in self.events.iter() {
             match event.token() {
                 // handle new connection

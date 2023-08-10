@@ -82,7 +82,7 @@ impl Frame {
         if data.len() == 0 {
             return Err(FrameParseError::Incomplete);
         }
-        
+
         let frist_byte = data[0];
         match frist_byte {
             // SimpleString +OK\r\n
