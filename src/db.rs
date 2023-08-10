@@ -4,7 +4,7 @@ use crate::data::Value;
 
 use std::{
     collections::{HashMap, VecDeque},
-    time::SystemTime
+    time::SystemTime,
 };
 
 type Bytes = Vec<u8>;
@@ -98,7 +98,8 @@ impl Database {
             entry.expire_at = old.unwrap().expire_at;
         }
         if entry.expire_at.is_some() {
-            self.expire_table.insert(key.clone(), entry.expire_at.unwrap());
+            self.expire_table
+                .insert(key.clone(), entry.expire_at.unwrap());
         }
 
         let old = self.table.insert(key, entry);
@@ -197,6 +198,55 @@ impl Database {
         }
     }
 
+    pub fn hset(
+        &mut self,
+        key: String,
+        field_values: Vec<(String, Bytes)>,
+    ) -> Result<usize, ExecuteError> {
+        let entry = self.table.get_mut(&key);
+        match entry {
+            Some(entry) => {
+                if !entry.value.is_hash() {
+                    return Err(ExecuteError::WrongType);
+                }
+                let mut value_len = 0;
+                let map = entry.value.as_hash_mut().unwrap();
+                for (field, value) in field_values {
+                    map.insert(field, value);
+                    value_len += 1;
+                }
+                Ok(value_len)
+            }
+            None => {
+                let mut map: HashMap<String, Vec<u8>> = HashMap::new();
+                let res = field_values.len();
+                for (field, value) in field_values {
+                    map.insert(field, value);
+                }
+                let entry = Entry {
+                    value: Value::Hash(map),
+                    expire_at: None,
+                };
+                self.table.insert(key, entry);
+                Ok(res)
+            }
+        }
+    }
+
+    pub fn hget(&self, key: &str, field: &str) -> Result<Option<Bytes>, ExecuteError> {
+        let entry = self.table.get(key);
+        match entry {
+            Some(entry) => {
+                if !entry.value.is_hash() {
+                    return Err(ExecuteError::WrongType);
+                }
+                let map = entry.value.as_hash_ref().unwrap();
+                Ok(map.get(field).map(|v| v.clone()))
+            }
+            None => Err(ExecuteError::KeyNotFound),
+        }
+    }
+
     pub fn zadd(
         &mut self,
         key: &str,
@@ -268,6 +318,14 @@ impl Database {
                 Ok(value_len)
             }
             None => Err(ExecuteError::KeyNotFound),
+        }
+    }
+
+    pub fn get_type(&self, key: &str) -> &'static str {
+        let entry = self.table.get(key);
+        match entry {
+            Some(entry) => entry.value.get_type(),
+            None => "none",
         }
     }
 

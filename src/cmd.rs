@@ -350,6 +350,84 @@ impl LRange {
 }
 
 #[derive(Debug)]
+pub(crate) struct HSet {
+    key: String,
+    field_values: Vec<(String, Vec<u8>)>,
+}
+
+impl HSet {
+    fn new(key: String, field_values: Vec<(String, Vec<u8>)>) -> Self {
+        Self { key, field_values }
+    }
+
+    fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"HSET")?;
+
+        let key = next_string(&mut iter)?; // key
+        let mut field_values = Vec::new();
+        while iter.len() > 0 {
+            let field = next_string(&mut iter)?; // field
+            let value = next_bytes(&mut iter)?; // value
+            field_values.push((field, value));
+        }
+        if field_values.len() == 0 {
+            return Err(CommandErr::WrongNumberOfArguments);
+        }
+        Ok(Self::new(key, field_values))
+    }
+
+    fn apply(self, db: &mut Database) -> Frame {
+        match db.hset(self.key, self.field_values.clone()) {
+            Ok(len) => Frame::Integer(len as i64),
+            Err(e) => match e {
+                crate::db::ExecuteError::WrongType => Frame::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ),
+                _ => unreachable!("unexpect hset error: {:?}", e),
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct HGet {
+    key: String,
+    field: String,
+}
+
+impl HGet {
+    fn new(key: String, field: String) -> Self {
+        Self { key, field }
+    }
+
+    fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"HGET")?;
+
+        let key = next_string(&mut iter)?; // key
+        let field = next_string(&mut iter)?; // field
+        Ok(Self::new(key, field))
+    }
+
+    fn apply(self, db: &mut Database) -> Frame {
+        match db.hget(&self.key, &self.field) {
+            Ok(value) => match value {
+                Some(v) => Frame::BulkString(v),
+                None => Frame::Nil,
+            },
+            Err(e) => match e {
+                crate::db::ExecuteError::KeyNotFound => Frame::Nil,
+                crate::db::ExecuteError::WrongType => Frame::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ),
+                _ => unreachable!("unexpect hget error: {:?}", e),
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct ZAdd {
     key: String,
     nx: bool,
@@ -540,7 +618,32 @@ impl ZRem {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
+pub(crate) struct GetType {
+    key: String,
+}
+
+impl GetType {
+    fn new(key: String) -> Self {
+        Self { key }
+    }
+
+    fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+        if frames.len() != 2 {
+            return Err(CommandErr::WrongNumberOfArguments);
+        }
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"TYPE")?;
+        let key = next_string(&mut iter)?; // key
+        Ok(Self::new(key))
+    }
+
+    fn apply(self, db: &Database) -> Frame {
+        Frame::SimpleString(db.get_type(&self.key).to_string())
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct Flush {}
 
 impl Flush {
@@ -599,7 +702,12 @@ pub(crate) enum Command {
     // LIST
     LPush(LPush),
     LRange(LRange),
-    // SET
+
+    // Hash
+    HSet(HSet),
+    HGet(HGet),
+
+    // SORT SET
     ZAdd(ZAdd),
     ZCard(ZCard),
     ZRem(ZRem),
@@ -607,6 +715,7 @@ pub(crate) enum Command {
     // META
     Del(Del),
     Expire(Expire),
+    Type(GetType),
 
     // DB
     Flush(Flush),
@@ -635,6 +744,10 @@ impl Command {
             "LPUSH" => Ok(Command::LPush(LPush::from_frames(frame)?)),
             "LRANGE" => Ok(Command::LRange(LRange::from_frames(frame)?)),
 
+            // HASH
+            "HSET" => Ok(Command::HSet(HSet::from_frames(frame)?)),
+            "HGET" => Ok(Command::HGet(HGet::from_frames(frame)?)),
+
             // Sort Set
             "ZADD" => Ok(Command::ZAdd(ZAdd::from_frames(frame)?)),
             "ZCARD" => Ok(Command::ZCard(ZCard::from_frames(frame)?)),
@@ -643,6 +756,7 @@ impl Command {
             // META
             "DEL" => Ok(Command::Del(Del::from_frames(frame)?)),
             "EXPIRE" => Ok(Command::Expire(Expire::from_frames(frame)?)),
+            "TYPE" => Ok(Command::Type(GetType::from_frames(frame)?)),
 
             // Other
             "FLUSH" => Ok(Command::Flush(Flush::from_frames(frame)?)),
@@ -659,9 +773,12 @@ impl Command {
             Command::Expire(expire) => expire.apply(db),
             Command::LPush(lpush) => lpush.apply(db),
             Command::LRange(lrange) => lrange.apply(db),
+            Command::HSet(hset) => hset.apply(db),
+            Command::HGet(hget) => hget.apply(db),
             Command::ZAdd(zadd) => zadd.apply(db),
             Command::ZCard(zcard) => zcard.apply(db),
             Command::ZRem(zrem) => zrem.apply(db),
+            Command::Type(get_type) => get_type.apply(db),
             Command::Flush(flush) => flush.apply(db),
         }
     }
@@ -809,6 +926,33 @@ mod tests {
     }
 
     #[test]
+    fn test_hset() {
+        let mut db = Database::new();
+        let cmd = Command::from_frames(vec![
+            Frame::BulkString(b"hset".to_vec()),
+            Frame::BulkString(b"key".to_vec()),
+            Frame::BulkString(b"field".to_vec()),
+            Frame::BulkString(b"value".to_vec()),
+        ])
+        .unwrap();
+        let result = Command::apply(&mut db, cmd);
+        assert_eq!(result, Frame::Integer(1));
+    }
+
+    #[test]
+    fn test_hget() {
+        let mut db = Database::new();
+        let cmd = Command::from_frames(vec![
+            Frame::BulkString(b"hget".to_vec()),
+            Frame::BulkString(b"key".to_vec()),
+            Frame::BulkString(b"field".to_vec()),
+        ])
+        .unwrap();
+        let result = Command::apply(&mut db, cmd);
+        assert_eq!(result, Frame::Nil);
+    }
+
+    #[test]
     fn test_zadd() {
         let mut db = Database::new();
         let cmd = Command::from_frames(vec![
@@ -845,6 +989,18 @@ mod tests {
         .unwrap();
         let result = Command::apply(&mut db, cmd);
         assert_eq!(result, Frame::Integer(0));
+    }
+
+    #[test]
+    fn test_type() {
+        let mut db = Database::new();
+        let cmd = Command::from_frames(vec![
+            Frame::BulkString(b"type".to_vec()),
+            Frame::BulkString(b"key".to_vec()),
+        ])
+        .unwrap();
+        let result = Command::apply(&mut db, cmd);
+        assert_eq!(result, Frame::SimpleString("none".to_string()));
     }
 
     #[test]

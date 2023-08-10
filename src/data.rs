@@ -145,11 +145,23 @@ pub enum Value {
     KV(Bytes),
     List(VecDeque<Bytes>),
     Set(HashSet<Bytes>),
-    Hash(HashMap<Bytes, Bytes>),
+    Hash(HashMap<String, Bytes>),
     ZSet(ZSet),
 }
 
 impl Value {
+    #[allow(dead_code)]
+    pub fn get_type(&self) -> &'static str {
+        match self {
+            Value::Nil => "none",
+            Value::KV(_) => "string",
+            Value::List(_) => "list",
+            Value::Set(_) => "set",
+            Value::Hash(_) => "hash",
+            Value::ZSet(_) => "zset",
+        }
+    }
+
     #[allow(dead_code)]
     pub fn is_nil(&self) -> bool {
         match self {
@@ -271,7 +283,7 @@ impl Value {
     }
 
     #[allow(dead_code)]
-    pub fn as_hash(self) -> Option<HashMap<Bytes, Bytes>> {
+    pub fn as_hash(self) -> Option<HashMap<String, Bytes>> {
         match self {
             Value::Hash(v) => Some(v),
             _ => None,
@@ -279,7 +291,7 @@ impl Value {
     }
 
     #[allow(dead_code)]
-    pub fn as_hash_ref(&self) -> Option<&HashMap<Bytes, Bytes>> {
+    pub fn as_hash_ref(&self) -> Option<&HashMap<String, Bytes>> {
         match self {
             Value::Hash(v) => Some(v),
             _ => None,
@@ -287,7 +299,7 @@ impl Value {
     }
 
     #[allow(dead_code)]
-    pub fn as_hash_mut(&mut self) -> Option<&mut HashMap<Bytes, Bytes>> {
+    pub fn as_hash_mut(&mut self) -> Option<&mut HashMap<String, Bytes>> {
         match self {
             Value::Hash(v) => Some(v),
             _ => None,
@@ -350,12 +362,7 @@ impl Display for Value {
                     if i != 0 {
                         write!(f, ", ")?;
                     }
-                    write!(
-                        f,
-                        "{}:{}",
-                        String::from_utf8_lossy(k),
-                        String::from_utf8_lossy(v)
-                    )?;
+                    write!(f, "{}:{}", k, String::from_utf8_lossy(v))?;
                 }
                 write!(f, "}}")
             }
