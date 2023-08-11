@@ -321,11 +321,11 @@ impl Database {
         }
     }
 
-    pub fn get_type(&self, key: &str) -> &'static str {
+    pub fn get_type(&self, key: &str) -> Option<&'static str> {
         let entry = self.table.get(key);
         match entry {
-            Some(entry) => entry.value.get_type(),
-            None => "none",
+            Some(entry) => Some(entry.value.get_type()),
+            None => None,
         }
     }
 

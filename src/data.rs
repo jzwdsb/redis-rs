@@ -141,7 +141,6 @@ impl ZSet {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum Value {
-    Nil,
     KV(Bytes),
     List(VecDeque<Bytes>),
     Set(HashSet<Bytes>),
@@ -153,20 +152,11 @@ impl Value {
     #[allow(dead_code)]
     pub fn get_type(&self) -> &'static str {
         match self {
-            Value::Nil => "none",
             Value::KV(_) => "string",
             Value::List(_) => "list",
             Value::Set(_) => "set",
             Value::Hash(_) => "hash",
             Value::ZSet(_) => "zset",
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn is_nil(&self) -> bool {
-        match self {
-            Value::Nil => true,
-            _ => false,
         }
     }
 
@@ -334,7 +324,6 @@ impl Value {
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Nil => write!(f, "(nil)"),
             Value::KV(v) => write!(f, "{}", String::from_utf8_lossy(v)),
             Value::List(v) => {
                 write!(f, "[")?;
