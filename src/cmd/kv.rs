@@ -1,3 +1,5 @@
+use log::trace;
+
 use crate::cmd::check_cmd;
 use crate::cmd::{next_bytes, next_integer, next_string, CommandErr};
 use crate::db::Database;
@@ -5,7 +7,7 @@ use crate::frame::Frame;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Get {
     key: String,
 }
@@ -17,6 +19,7 @@ impl Get {
     }
 
     pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+        trace!("Get::from_frames {:?}", frames);
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"GET")?;
         let key = next_string(&mut iter)?;
@@ -42,7 +45,48 @@ impl Get {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
+pub struct MGet {
+    key: Vec<String>
+}
+
+impl MGet {
+    pub fn new(key: Vec<String>) -> Self {
+        Self { key }
+    }
+
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self,CommandErr> {
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"MGET").unwrap();
+        let mut key = Vec::new();
+        while iter.len() > 0 {
+            key.push(next_string(&mut iter).unwrap());
+        }
+        if key.len() == 0 {
+            return Err(CommandErr::SyntaxError)
+        }
+        Ok(Self::new(key))
+    }
+
+    pub fn apply(self, db: &mut Database) -> Frame {
+        let mut result = Vec::new();
+        for k in self.key {
+            match db.get(&k) {
+                Ok(value) => result.push(Frame::BulkString(value)),
+                Err(e) => match e {
+                    crate::db::ExecuteError::KeyNotFound => result.push(Frame::Nil),
+                    crate::db::ExecuteError::WrongType => result.push(Frame::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                    )),
+                    _ => unreachable!("unexpect get error: {:?}", e),
+                },
+            }
+        }
+        Frame::Array(result)
+    }
+}
+
+#[derive(Debug)]
 pub struct Set {
     key: String,
     value: Vec<u8>,
@@ -80,6 +124,7 @@ impl Set {
 
     // SET key value [NX] [XX] [GET] [EX <seconds>] [PX <milliseconds>] [KEEPTTL]
     pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+        trace!("Set::from_frames {:?}", frames);
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"SET")?;
 
@@ -165,6 +210,48 @@ impl Set {
     }
 }
 
+#[derive(Debug)]
+pub struct MSet {
+    pairs: Vec<(String, Vec<u8>)>,
+}
+
+impl MSet {
+    pub fn new(pairs: Vec<(String, Vec<u8>)>) -> Self {
+        Self { pairs }
+    }
+
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"MSET")?;
+
+        let mut pairs = vec![];
+        while iter.len() > 0 {
+            let key = next_string(&mut iter)?;
+            let value = next_bytes(&mut iter)?;
+            pairs.push((key, value));
+        }
+        if pairs.len() == 0 {
+            return Err(CommandErr::SyntaxError);
+        }
+        Ok(Self::new(pairs))
+    }
+
+    pub fn apply(self, db: &mut Database) -> Frame {
+        for (key, value) in self.pairs {
+            match db.set(key, value, false, false, false, false, None) {
+                Ok(_) => {}, 
+                Err(e) => match e {
+                    crate::db::ExecuteError::OutOfMemory => {
+                        return Frame::Error("Out of memory".to_string())
+                    }
+                    _ => unreachable!("unexpect set error: {:?}", e),
+                },
+            }
+        }
+        Frame::SimpleString("Ok".to_string())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -182,11 +269,41 @@ mod test {
     }
 
     #[test]
+    fn test_mget() {
+        let mut db = Database::new();
+        let cmd = MGet::from_frames(vec![
+            Frame::BulkString(b"mget".to_vec()),
+            Frame::BulkString(b"key1".to_vec()),
+            Frame::BulkString(b"key2".to_vec()),
+        ]).unwrap();
+            
+        let result = cmd.apply(&mut db);
+        assert_eq!(result, Frame::Array(vec![Frame::Nil, Frame::Nil]));
+    }
+
+    #[test]
+    fn test_mset() {
+        let mut db = Database::new();
+        let cmd = MSet::from_frames(
+            vec![
+                Frame::BulkString(b"mset".to_vec()),
+                Frame::BulkString(b"key1".to_vec()),
+                Frame::BulkString(b"value1".to_vec()),
+                Frame::BulkString(b"key2".to_vec()),
+                Frame::BulkString(b"value2".to_vec()),
+            ]
+        ).unwrap();
+
+        let result = cmd.apply(&mut db);
+        assert_eq!(result, Frame::SimpleString("Ok".to_string()));
+    }
+
+    #[test]
     fn test_set() {
         let mut db = Database::new();
         let cmd = Set::from_frames(vec![
-            Frame::BulkString(b"set".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
+            Frame::SimpleString("set".to_string()),
+            Frame::SimpleString("key".to_string()),
             Frame::BulkString(b"value".to_vec()),
         ])
         .unwrap();

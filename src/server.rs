@@ -2,7 +2,7 @@
 //! use mio to achieve non-blocking IO, multiplexing and event driven
 //! an event loop is used to handle all the IO events
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::io::ErrorKind;
 use std::time::{Duration, SystemTime};
@@ -13,6 +13,7 @@ use crate::err::ServerErr;
 use crate::frame::Frame;
 use crate::helper::{bytes_to_printable_string, read_request, write_response};
 
+use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
 
@@ -173,7 +174,8 @@ impl Server {
                             continue;
                         }
                     };
-                    let resp = Command::apply(&mut self.db, command);
+
+                    let resp = command.apply(&mut self.db);
                     trace!("Apply command from token {:?}: {:?}", token, resp);
 
                     // append response to the response buffer
@@ -218,6 +220,8 @@ impl Server {
         }
     }
 
+    fn send_response(&mut self, token: Token) {}
+
     fn poll(&mut self, timeout: Option<Duration>) -> Result<(), ServerErr> {
         self.poll
             .poll(&mut self.events, timeout)
@@ -231,6 +235,7 @@ impl Server {
             if start_time.elapsed().unwrap() > Duration::from_millis(100) {
                 return;
             }
+            // TODO: check if the request is completed
         }
 
         // check expired key

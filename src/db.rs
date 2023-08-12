@@ -85,9 +85,6 @@ impl Database {
             expire_at: expire_at,
         };
         let old = self.table.get(&key);
-        if old.is_some() && !old.as_ref().unwrap().value.is_kv() {
-            return Err(ExecuteError::WrongType);
-        }
         if nx && old.is_some() {
             return Err(ExecuteError::NoAction);
         }
@@ -336,7 +333,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, time::Duration};
+    use std::time::Duration;
 
     use super::*;
 
@@ -348,15 +345,10 @@ mod tests {
         let res = db.set(key.clone(), val.clone(), false, false, false, false, None);
         assert_eq!(res, Ok(None));
         assert_eq!(db.get(&key), Ok(val.clone()));
-        db.table.get_mut(&key).unwrap().value = Value::List(VecDeque::new());
-        let res = db.set(key.clone(), val.clone(), false, false, false, false, None);
-        assert_eq!(res, Err(ExecuteError::WrongType));
-        db.table.remove(&key);
         let res = db.set(key.clone(), val.clone(), false, true, false, false, None);
-        assert_eq!(res, Err(ExecuteError::NoAction));
-        assert_eq!(db.table.contains_key(&key), false);
-        let res = db.set(key.clone(), val.clone(), true, false, false, false, None);
         assert_eq!(res, Ok(None));
+        let res = db.set(key.clone(), val.clone(), true, false, false, false, None);
+        assert_eq!(res, Err(ExecuteError::NoAction));
         assert_eq!(
             db.table
                 .get(&key)

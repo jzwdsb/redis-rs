@@ -3,11 +3,50 @@ use crate::cmd::CommandErr;
 use crate::db::Database;
 use crate::frame::Frame;
 
+use super::next_bytes;
+
+#[derive(Debug)]
+pub struct Ping {
+    message: Option<Vec<u8>>,
+}
+
+impl Ping {
+    pub fn new(message: Option<Vec<u8>>) -> Self {
+        Self{message}
+    }
+
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+        if frames.len() > 2 {
+            return Err(CommandErr::WrongNumberOfArguments);
+        }
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"PING")?;
+        let message = if iter.len() == 1 {
+            Some(next_bytes(&mut iter)?)
+        } else {
+            None
+        };
+        Ok(Self::new(message))
+    }
+
+    pub fn apply(self, db: &mut Database) -> Frame {
+        if let Some(message) = self.message {
+            Frame::BulkString(message)
+        } else {
+            Frame::SimpleString("PONG".to_string())
+        }
+    }
+
+
+}
+
+
+
 #[derive(Debug)]
 pub struct Flush {}
 
 impl Flush {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {}
     }
 

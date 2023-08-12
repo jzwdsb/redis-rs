@@ -6,11 +6,11 @@ use crate::frame::Frame;
 use std::time::{Duration, SystemTime};
 
 #[derive(Debug)]
-pub struct GetType {
+pub struct Type {
     key: String,
 }
 
-impl GetType {
+impl Type {
     fn new(key: String) -> Self {
         Self { key }
     }
@@ -137,7 +137,7 @@ mod test {
     #[test]
     fn test_type() {
         let mut db = Database::new();
-        let cmd = GetType::from_frames(vec![
+        let cmd = Type::from_frames(vec![
             Frame::BulkString(b"type".to_vec()),
             Frame::BulkString(b"key".to_vec()),
         ])

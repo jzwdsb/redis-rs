@@ -5,25 +5,26 @@
 //! This file defines the command types and the command parsing logic.
 //! and how the command manipulates the database.
 
+mod kv;
+pub use kv::*;
+mod list;
+pub use list::*;
+mod hash;
+pub use hash::*;
+mod sort_set;
+pub use sort_set::*;
+mod meta;
+pub use meta::*;
+mod db;
+pub use db::*;
+
 use log::trace;
 
 use crate::frame::Frame;
 use std::fmt::Display;
 
-mod kv;
-pub use kv::{Get, Set};
-mod list;
-pub use list::{LPush, LRange};
-mod hash;
-pub use hash::{HGet, HSet};
-mod sort_set;
-pub use sort_set::{ZAdd, ZCard, ZRem};
-mod key;
-pub use key::{Del, Expire, GetType};
-mod db;
-pub use db::Flush;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 #[allow(dead_code)]
 pub enum CommandErr {
     InvalidProtocol,
@@ -51,11 +52,64 @@ impl From<std::string::FromUtf8Error> for CommandErr {
     }
 }
 
+// marco generated code is not working, match the wrong arm
+// FIXME: use macro to generate the command enum
+#[allow(unused_macros)]
+macro_rules! def_command_enum {
+    ($($cmd:ident),*) => {
+        #[derive(Debug)]
+        pub enum Command {
+            $($cmd($cmd),)*
+        }
+
+        impl Command {
+            pub fn from_frame(frame:Frame) -> Result<Self, CommandErr> {
+                trace!("from_frame: {:?}", frame);
+                if let Frame::Array(cmd) = frame {
+                    Self::from_frames(cmd)
+                } else {
+                    Err(CommandErr::InvalidProtocol)
+                }
+            }
+            fn from_frames(frame: Vec<Frame>) -> Result<Self,CommandErr> {
+                if frame.is_empty() {
+                    return Err(CommandErr::InvalidProtocol);
+                }
+
+                let command = frame_to_string(&frame[0])?;
+                trace!("from_frames: {:?}", command);
+                match command.to_uppercase().as_str() {
+                    $(stringify!($cmd) => {
+                        trace!("cmd: {:?} got str: {:?}", stringify!($cmd), command);
+                        Ok(Command::$cmd($cmd::from_frames(frame)?))},)*
+                    #[allow(unreachable_patterns)]
+                    _ => Err(CommandErr::UnknownCommand),
+                }
+            }
+
+            pub fn apply(self, db: &mut crate::db::Database) -> Frame {
+                trace!("apply command: {:?}", self);
+                match self {
+                    $(Command::$cmd(cmd) => cmd.apply(db),)*
+                }
+            }
+        }
+    }
+}
+
+
+// def_command_enum!(
+//     Get, MGet, Set, MSet, LPush, LRange, HSet, HGet, ZAdd, ZCard, ZRem, Del, Expire, Type, Ping,
+//     Flush
+// );
+
 #[derive(Debug)]
 pub enum Command {
     // KV
     Get(Get),
+    MGet(MGet),
     Set(Set),
+    MSet(MSet),
 
     // LIST
     LPush(LPush),
@@ -73,9 +127,10 @@ pub enum Command {
     // META
     Del(Del),
     Expire(Expire),
-    Type(GetType),
+    Type(Type),
 
     // DB
+    Ping(Ping),
     Flush(Flush),
 }
 
@@ -88,7 +143,7 @@ impl Command {
         }
     }
 
-    pub fn from_frames(frame: Vec<Frame>) -> Result<Self, CommandErr> {
+    fn from_frames(frame: Vec<Frame>) -> Result<Self, CommandErr> {
         if frame.is_empty() {
             return Err(CommandErr::InvalidProtocol);
         }
@@ -96,7 +151,9 @@ impl Command {
         match cmd.to_uppercase().as_str() {
             // KV
             "GET" => Ok(Command::Get(Get::from_frames(frame)?)),
+            "MGET" => Ok(Command::MGet(MGet::from_frames(frame)?)),
             "SET" => Ok(Command::Set(Set::from_frames(frame)?)),
+            "MSET" => Ok(Command::MSet(MSet::from_frames(frame)?)),
 
             // LIST
             "LPUSH" => Ok(Command::LPush(LPush::from_frames(frame)?)),
@@ -114,19 +171,22 @@ impl Command {
             // META
             "DEL" => Ok(Command::Del(Del::from_frames(frame)?)),
             "EXPIRE" => Ok(Command::Expire(Expire::from_frames(frame)?)),
-            "TYPE" => Ok(Command::Type(GetType::from_frames(frame)?)),
+            "TYPE" => Ok(Command::Type(Type::from_frames(frame)?)),
 
             // Other
+            "PING" => Ok(Command::Ping(Ping::from_frames(frame)?)),
             "FLUSH" => Ok(Command::Flush(Flush::from_frames(frame)?)),
             _ => Err(CommandErr::UnknownCommand),
         }
     }
 
-    pub fn apply(db: &mut crate::db::Database, cmd: Self) -> Frame {
-        trace!("apply command: {:?}", cmd);
-        match cmd {
+    pub fn apply(self, db: &mut crate::db::Database) -> Frame {
+        trace!("apply command: {:?}", self);
+        match self {
             Command::Get(get) => get.apply(db),
+            Command::MGet(mget) => mget.apply(db),
             Command::Set(set) => set.apply(db),
+            Command::MSet(mset) => mset.apply(db),
             Command::Del(del) => del.apply(db),
             Command::Expire(expire) => expire.apply(db),
             Command::LPush(lpush) => lpush.apply(db),
@@ -137,6 +197,7 @@ impl Command {
             Command::ZCard(zcard) => zcard.apply(db),
             Command::ZRem(zrem) => zrem.apply(db),
             Command::Type(get_type) => get_type.apply(db),
+            Command::Ping(ping) => ping.apply(db),
             Command::Flush(flush) => flush.apply(db),
         }
     }
@@ -192,6 +253,7 @@ fn next_float(frame: &mut std::vec::IntoIter<Frame>) -> Result<f64, CommandErr> 
 
 #[inline]
 fn check_cmd(frame: &mut std::vec::IntoIter<Frame>, cmd: &[u8]) -> Result<(), CommandErr> {
+    trace!("check_cmd: {:?}", String::from_utf8(cmd.to_vec()));
     match frame.next() {
         Some(Frame::SimpleString(ref s)) if s.to_ascii_uppercase().as_bytes() == cmd => Ok(()),
         Some(Frame::BulkString(ref s)) if s.to_ascii_uppercase() == cmd => Ok(()),
