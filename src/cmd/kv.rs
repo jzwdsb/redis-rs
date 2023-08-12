@@ -1,4 +1,3 @@
-use log::trace;
 
 use crate::cmd::check_cmd;
 use crate::cmd::{next_bytes, next_integer, next_string, CommandErr};
@@ -19,7 +18,6 @@ impl Get {
     }
 
     pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
-        trace!("Get::from_frames {:?}", frames);
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"GET")?;
         let key = next_string(&mut iter)?;
@@ -124,7 +122,6 @@ impl Set {
 
     // SET key value [NX] [XX] [GET] [EX <seconds>] [PX <milliseconds>] [KEEPTTL]
     pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
-        trace!("Set::from_frames {:?}", frames);
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"SET")?;
 
