@@ -179,6 +179,9 @@ impl Frame {
                 let mut result = Vec::new();
                 for item in s.split(' ') {
                     // check simple string or integer
+                    if item.len() == 0 {
+                        continue;
+                    }
                     match item.as_bytes()[0] {
                         n if n.is_ascii_digit() => {
                             let num = item.parse()?;

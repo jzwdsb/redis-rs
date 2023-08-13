@@ -12,7 +12,7 @@ pub struct Ping {
 
 impl Ping {
     pub fn new(message: Option<Vec<u8>>) -> Self {
-        Self{message}
+        Self { message }
     }
 
     pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
@@ -29,18 +29,14 @@ impl Ping {
         Ok(Self::new(message))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, _db: &mut Database) -> Frame {
         if let Some(message) = self.message {
             Frame::BulkString(message)
         } else {
             Frame::SimpleString("PONG".to_string())
         }
     }
-
-
 }
-
-
 
 #[derive(Debug)]
 pub struct Flush {}

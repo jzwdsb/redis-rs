@@ -13,7 +13,6 @@ use crate::err::ServerErr;
 use crate::frame::Frame;
 use crate::helper::{bytes_to_printable_string, read_request, write_response};
 
-use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
 
@@ -43,6 +42,7 @@ pub struct Server {
     events: Events,
     sockets: HashMap<Token, TcpStream>,
     token_count: Token,
+    wait_duration: Duration,
     requests: HashMap<Token, Vec<u8>>,
     response: HashMap<Token, Vec<u8>>,
 }
@@ -68,6 +68,7 @@ impl Server {
             events: Events::with_capacity(max_client),
             sockets: HashMap::new(),
             token_count: Token(1),
+            wait_duration: Duration::from_millis(100),
             response: HashMap::new(),
             requests: HashMap::new(),
         })
@@ -75,152 +76,192 @@ impl Server {
 
     pub fn run(&mut self) -> Result<(), ServerErr> {
         while !self.shutdown {
-            self.handle_event();
+            let (reads, writes) = self.collect_events();
+            let resp_cnt = self.handle_writes(writes);
+            let req_cnt = self.handle_reads(reads);
+
+            if resp_cnt == 0 && req_cnt == 0 {
+                self.idle();
+            }
         }
 
         Ok(())
     }
 
-    pub fn handle_event(&mut self) {
-        let mut busy = false;
-        self.poll(Some(Duration::from_millis(100))).unwrap();
-
+    fn collect_events(&mut self) -> (Vec<Token>, HashSet<Token>) {
+        self.poll(Some(self.wait_duration)).unwrap();
+        let (mut reads, mut writes) = (Vec::new(), HashSet::new());
         for event in self.events.iter() {
-            match event.token() {
-                // handle new connection
-                Token(0) => match self.listener.accept() {
-                    Ok((mut stream, addr)) => {
-                        trace!("Accept new connection, addr: {}", addr);
-                        let token = self.token_count;
-                        self.poll
-                            .registry()
-                            .register(&mut stream, token, Interest::READABLE)
-                            .unwrap();
-                        self.sockets.insert(token, stream);
-                        self.token_count.0 += 1;
-                    }
-                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
-                    Err(e) => {
-                        warn!("Failed to accept new connection: {}", e);
-                    }
-                },
-                token if event.is_readable() => {
-                    busy = true;
-                    let req_bytes = read_request(&mut self.sockets.get_mut(&token).unwrap());
-                    let req_bytes = match req_bytes {
-                        Ok(req_bytes) => {
-                            let prev_bytes = self.requests.remove(&token);
-                            match prev_bytes {
-                                Some(mut prev_bytes) => {
-                                    prev_bytes.extend_from_slice(&req_bytes);
-                                    prev_bytes
-                                }
-                                None => req_bytes,
-                            }
-                        }
-                        Err(ref e) if e.kind() == ErrorKind::ConnectionAborted => {
-                            // connection closed
-                            trace!("Connection closed: {:?}", token);
-                            self.sockets.remove(&token);
-                            continue;
-                        }
-                        Err(e) => {
-                            warn!("Failed to read request: {}", e);
-                            continue;
-                        }
-                    };
-                    trace!(
-                        "Read request from token {:?}, : {:?}",
-                        token,
-                        bytes_to_printable_string(&req_bytes)
-                    );
-
-                    let protocol = Frame::from_bytes(&req_bytes);
-                    let protocol = match protocol {
-                        Ok(protocol) => protocol,
-                        Err(ref e) if e.is_incomplete() => {
-                            // incomplete frame, wait for next read
-                            self.requests.insert(token, req_bytes);
-                            continue;
-                        }
-                        Err(e) => {
-                            debug!("Failed to parse protocol: {}", e);
-                            continue;
-                        }
-                    };
-
-                    trace!("Parse protocol from token {:?}: {}", token, protocol);
-
-                    let command = Command::from_frame(protocol);
-                    trace!("Parse command from token {:?}: {:?}", token, command);
-                    let command = match command {
-                        Ok(command) => {
-                            // complete frame and successful parse command from the frame
-                            // must have reponse to send back
-                            // invert interest to writable
-                            self.poll
-                                .registry()
-                                .reregister(
-                                    self.sockets.get_mut(&token).unwrap(),
-                                    token,
-                                    Interest::WRITABLE,
-                                )
-                                .unwrap();
-                            command
-                        }
-                        Err(e) => {
-                            // invalid command, ignore this command
-                            debug!("Failed to parse command: {}", e);
-                            continue;
-                        }
-                    };
-
-                    let resp = command.apply(&mut self.db);
-                    trace!("Apply command from token {:?}: {:?}", token, resp);
-
-                    // append response to the response buffer
-                    self.response
-                        .entry(token)
-                        .or_insert_with(Vec::new)
-                        .extend(resp.serialize());
-                }
-                token if event.is_writable() => {
-                    busy = true;
-                    if self.response.contains_key(&token) {
-                        let resp_bytes = self.response.remove(&token).unwrap();
-                        let sent = write_response(
-                            self.sockets.get_mut(&token).unwrap(),
-                            resp_bytes.as_slice(),
-                        );
-                        match sent {
-                            Ok(len) if len == resp_bytes.len() => {
-                                self.poll
-                                    .registry()
-                                    .reregister(
-                                        self.sockets.get_mut(&token).unwrap(),
-                                        token,
-                                        Interest::READABLE,
-                                    )
-                                    .unwrap();
-                            }
-                            Ok(len) => {
-                                self.response.insert(token, resp_bytes[len..].to_vec());
-                            }
-                            Err(e) => {
-                                warn!("Failed to send response: {}", e);
-                            }
-                        }
-                    }
-                }
-                _ => unreachable!(),
+            if event.is_readable() {
+                reads.push(event.token());
+            } else if event.is_writable() {
+                writes.insert(event.token());
             }
         }
-        if !busy {
-            self.idle();
+        (reads, writes)
+    }
+
+    fn handle_reads(&mut self, reads: Vec<Token>) -> usize {
+        let count = reads.len();
+        for read in reads {
+            match read {
+                // handle new connection
+                Token(0) => self.accept_new_connection(),
+                token => self.handle_request(token),
+            }
+        }
+        count
+    }
+
+    fn handle_writes(&mut self, writes: HashSet<Token>) -> usize {
+        if self.response.is_empty() || writes.is_empty() {
+            return 0;
+        }
+
+        let can_write = {
+            let mut can_write = Vec::new();
+            for token in self.response.keys().into_iter() {
+                if writes.contains(&token) {
+                    can_write.push(token.clone());
+                }
+            }
+            can_write
+        };
+        let count = can_write.len();
+        for token in can_write {
+            let resp = self.response.remove(&token).unwrap();
+            let left = self.send_response(token, resp);
+            if !left.is_empty() {
+                self.response.insert(token, left);
+                continue;
+            }
+            self.invert_interest(token, Interest::READABLE);
+        }
+        count
+    }
+
+    fn handle_request(&mut self, token: Token) {
+        let req_data = match read_request(self.sockets.get_mut(&token).unwrap()) {
+            Ok(req_data) => match self.requests.remove(&token) {
+                Some(mut prev_bytes) => {
+                    prev_bytes.extend_from_slice(&req_data);
+                    prev_bytes
+                }
+                None => req_data,
+            },
+            Err(ref e) if e.kind() == ErrorKind::ConnectionAborted => {
+                // connection closed
+                trace!("Connection closed: {:?}", token);
+                self.drop_conncetion(token);
+                return;
+            }
+            Err(e) => {
+                warn!("Failed to read request: {}", e);
+                return;
+            }
+        };
+        trace!(
+            "Read request from token {:?}, : {:?}",
+            token,
+            bytes_to_printable_string(&req_data)
+        );
+        let frame = match Frame::from_bytes(&req_data) {
+            Ok(frame) => frame,
+            Err(ref e) if e.is_incomplete() => {
+                // incomplete frame, wait for next read
+                trace!("Incomplete frame: {:?}", token);
+                self.requests.insert(token, req_data);
+                return;
+            }
+            Err(e) => {
+                trace!("Failed to parse protocol: {}", e);
+                return;
+            }
+        };
+
+        let command = match Command::from_frame(frame) {
+            Ok(command) => {
+                // complete frame and successful parse command from the frame
+                // must have reponse to send back
+                // invert interest to writable
+                match command {
+                    Command::Quit(_) => {
+                        self.drop_conncetion(token);
+                        return;
+                    }
+                    _ => {}
+                }
+                self.invert_interest(token, Interest::WRITABLE);
+                command
+            }
+
+            Err(e) => {
+                // invalid command, ignore this command
+                debug!("Failed to parse command: {}", e);
+                return;
+            }
+        };
+
+        let resp = command.apply(&mut self.db);
+
+        trace!("Apply command from token {:?}: {:?}", token, resp);
+
+        // append response to the response buffer
+        self.set_resp(token, resp.serialize());
+    }
+
+    fn send_response(&mut self, token: Token, data: Vec<u8>) -> Vec<u8> {
+        match write_response(self.sockets.get_mut(&token).unwrap(), &data) {
+            Ok(len) if len == data.len() => Vec::new(),
+            Ok(len) => data[len..].to_vec(),
+
+            Err(e) => {
+                warn!("Failed to send response: {}", e);
+                data
+            }
         }
     }
 
-    fn send_response(&mut self, token: Token) {}
+    fn accept_new_connection(&mut self) {
+        match self.listener.accept() {
+            Ok((mut stream, addr)) => {
+                trace!("Accept new connection, addr: {}", addr);
+                let token = self.token_count;
+                self.poll
+                    .registry()
+                    .register(&mut stream, token, Interest::READABLE)
+                    .unwrap();
+                self.sockets.insert(token, stream);
+                self.token_count.0 += 1;
+            }
+            Err(e) => {
+                warn!("Failed to accept new connection: {}", e);
+            }
+        }
+    }
+
+    fn invert_interest(&mut self, token: Token, interest: Interest) {
+        self.poll
+            .registry()
+            .reregister(self.sockets.get_mut(&token).unwrap(), token, interest)
+            .unwrap();
+    }
+
+    fn set_resp(&mut self, token: Token, resp: Vec<u8>) {
+        self.response
+            .entry(token)
+            .or_insert_with(Vec::new)
+            .extend(resp);
+    }
+
+    fn drop_conncetion(&mut self, token: Token) {
+        let connection = self.sockets.remove(&token);
+        if connection.is_none() {
+            return;
+        }
+        let mut connection = connection.unwrap();
+        self.poll.registry().deregister(&mut connection).unwrap();
+    }
 
     fn poll(&mut self, timeout: Option<Duration>) -> Result<(), ServerErr> {
         self.poll

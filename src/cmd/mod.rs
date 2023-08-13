@@ -7,14 +7,22 @@
 
 mod kv;
 pub use kv::*;
+
 mod list;
 pub use list::*;
+
 mod hash;
 pub use hash::*;
+
 mod sort_set;
 pub use sort_set::*;
+
 mod meta;
 pub use meta::*;
+
+mod connections;
+pub use connections::*;
+
 mod db;
 pub use db::*;
 
@@ -80,7 +88,7 @@ macro_rules! def_command_enum {
                         $(to_upper_case_str!($cmd) => {
                             trace!("cmd: {:?} got str: {:?}", stringify!($cmd), command);
                             Ok(Command::$cmd($cmd::from_frames(frame)?))},)*
-                        _ => todo!(),
+                        _ => Err(CommandErr::UnknownCommand),
                     }
                 }
 
@@ -100,6 +108,7 @@ def_command_enum! {
     HSet, HGet,
     ZAdd, ZCard, ZRem,
     Del, Expire, Type,
+    Quit,
     Ping, Flush
 }
 
