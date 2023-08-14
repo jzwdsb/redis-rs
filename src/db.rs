@@ -1,6 +1,7 @@
 use log::trace;
 
 use crate::data::Value;
+use crate::RedisErr;
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -8,15 +9,6 @@ use std::{
 };
 
 type Bytes = Vec<u8>;
-
-#[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
-pub enum ExecuteError {
-    NoAction,
-    WrongType,
-    KeyNotFound,
-    OutOfMemory,
-}
 
 #[derive(Debug)]
 pub struct Entry {
@@ -38,7 +30,7 @@ impl Database {
         }
     }
 
-    pub fn get(&mut self, key: &str) -> Result<Bytes, ExecuteError> {
+    pub fn get(&mut self, key: &str) -> Result<Bytes, RedisErr> {
         trace!("Get key: {}", key);
         let entry = self.table.get(key);
         match entry {
@@ -48,15 +40,15 @@ impl Database {
                     if expire_at < SystemTime::now() {
                         self.table.remove(key);
                         self.expire_table.remove(key);
-                        return Err(ExecuteError::KeyNotFound);
+                        return Err(RedisErr::KeyNotFound);
                     }
                 }
                 match &entry.value {
                     Value::KV(v) => Ok(v.clone()),
-                    _ => Err(ExecuteError::WrongType),
+                    _ => Err(RedisErr::WrongType),
                 }
             }
-            None => Err(ExecuteError::KeyNotFound),
+            None => Err(RedisErr::KeyNotFound),
         }
     }
 
@@ -69,7 +61,7 @@ impl Database {
         get: bool,
         keepttl: bool,
         expire_at: Option<SystemTime>,
-    ) -> Result<Option<Bytes>, ExecuteError> {
+    ) -> Result<Option<Bytes>, RedisErr> {
         trace!(
             "Set key: {}, value: {:?}, nx: {}, xx: {}, get: {}, keepttl: {}, expire_at: {:?}",
             key,
@@ -86,10 +78,10 @@ impl Database {
         };
         let old = self.table.get(&key);
         if nx && old.is_some() {
-            return Err(ExecuteError::NoAction);
+            return Err(RedisErr::NoAction);
         }
         if xx && old.is_none() {
-            return Err(ExecuteError::NoAction);
+            return Err(RedisErr::NoAction);
         }
         if keepttl && old.is_some() {
             entry.expire_at = old.unwrap().expire_at;
@@ -106,7 +98,7 @@ impl Database {
         Ok(None)
     }
 
-    pub fn expire(&mut self, key: &str, expire_at: SystemTime) -> Result<(), ExecuteError> {
+    pub fn expire(&mut self, key: &str, expire_at: SystemTime) -> Result<(), RedisErr> {
         let entry = self.table.get_mut(key);
         match entry {
             Some(entry) => {
@@ -114,7 +106,7 @@ impl Database {
                 self.expire_table.insert(key.to_string(), expire_at);
                 Ok(())
             }
-            None => Err(ExecuteError::KeyNotFound),
+            None => Err(RedisErr::KeyNotFound),
         }
     }
 
@@ -124,13 +116,13 @@ impl Database {
         self.table.remove(key).map(|entry| entry.value)
     }
 
-    pub fn lpush(&mut self, key: &str, values: Vec<Bytes>) -> Result<usize, ExecuteError> {
+    pub fn lpush(&mut self, key: &str, values: Vec<Bytes>) -> Result<usize, RedisErr> {
         let entry = self.table.get_mut(key);
         let value_len = values.len();
         match entry {
             Some(entry) => {
                 if !entry.value.is_list() {
-                    return Err(ExecuteError::WrongType);
+                    return Err(RedisErr::WrongType);
                 }
                 let mut after_len = 0;
                 if let Value::List(list) = &mut entry.value {
@@ -154,12 +146,12 @@ impl Database {
         }
     }
 
-    pub fn lrange(&self, key: &str, start: i64, stop: i64) -> Result<Vec<Bytes>, ExecuteError> {
+    pub fn lrange(&self, key: &str, start: i64, stop: i64) -> Result<Vec<Bytes>, RedisErr> {
         let entry = self.table.get(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_list() {
-                    return Err(ExecuteError::WrongType);
+                    return Err(RedisErr::WrongType);
                 }
                 let mut res = Vec::new();
                 if let Value::List(list) = &entry.value {
@@ -191,7 +183,7 @@ impl Database {
                 }
                 Ok(res)
             }
-            None => Err(ExecuteError::KeyNotFound),
+            None => Err(RedisErr::KeyNotFound),
         }
     }
 
@@ -199,12 +191,12 @@ impl Database {
         &mut self,
         key: String,
         field_values: Vec<(String, Bytes)>,
-    ) -> Result<usize, ExecuteError> {
+    ) -> Result<usize, RedisErr> {
         let entry = self.table.get_mut(&key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_hash() {
-                    return Err(ExecuteError::WrongType);
+                    return Err(RedisErr::WrongType);
                 }
                 let mut value_len = 0;
                 let map = entry.value.as_hash_mut().unwrap();
@@ -230,17 +222,17 @@ impl Database {
         }
     }
 
-    pub fn hget(&self, key: &str, field: &str) -> Result<Option<Bytes>, ExecuteError> {
+    pub fn hget(&self, key: &str, field: &str) -> Result<Option<Bytes>, RedisErr> {
         let entry = self.table.get(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_hash() {
-                    return Err(ExecuteError::WrongType);
+                    return Err(RedisErr::WrongType);
                 }
                 let map = entry.value.as_hash_ref().unwrap();
                 Ok(map.get(field).map(|v| v.clone()))
             }
-            None => Err(ExecuteError::KeyNotFound),
+            None => Err(RedisErr::KeyNotFound),
         }
     }
 
@@ -254,12 +246,12 @@ impl Database {
         ch: bool,
         incr: bool,
         zset: Vec<(f64, Bytes)>,
-    ) -> Result<usize, ExecuteError> {
+    ) -> Result<usize, RedisErr> {
         let entry = self.table.get_mut(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_zset() {
-                    return Err(ExecuteError::WrongType);
+                    return Err(RedisErr::WrongType);
                 }
                 let mut value_len = 0;
                 let value = entry.value.as_zset_mut().unwrap();
@@ -284,26 +276,26 @@ impl Database {
         }
     }
 
-    pub fn zcard(&self, key: &str) -> Result<usize, ExecuteError> {
+    pub fn zcard(&self, key: &str) -> Result<usize, RedisErr> {
         let entry = self.table.get(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_zset() {
-                    return Err(ExecuteError::WrongType);
+                    return Err(RedisErr::WrongType);
                 }
 
                 Ok(entry.value.as_zset_ref().unwrap().len())
             }
-            None => Err(ExecuteError::KeyNotFound),
+            None => Err(RedisErr::KeyNotFound),
         }
     }
 
-    pub fn zrem(&mut self, key: &str, members: Vec<Bytes>) -> Result<usize, ExecuteError> {
+    pub fn zrem(&mut self, key: &str, members: Vec<Bytes>) -> Result<usize, RedisErr> {
         let entry = self.table.get_mut(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_zset() {
-                    return Err(ExecuteError::WrongType);
+                    return Err(RedisErr::WrongType);
                 }
                 let mut value_len = 0;
                 let value = entry.value.as_zset_mut().unwrap();
@@ -314,7 +306,7 @@ impl Database {
                 }
                 Ok(value_len)
             }
-            None => Err(ExecuteError::KeyNotFound),
+            None => Err(RedisErr::KeyNotFound),
         }
     }
 
@@ -348,7 +340,7 @@ mod tests {
         let res = db.set(key.clone(), val.clone(), false, true, false, false, None);
         assert_eq!(res, Ok(None));
         let res = db.set(key.clone(), val.clone(), true, false, false, false, None);
-        assert_eq!(res, Err(ExecuteError::NoAction));
+        assert_eq!(res, Err(RedisErr::NoAction));
         assert_eq!(
             db.table
                 .get(&key)
@@ -411,7 +403,7 @@ mod tests {
         assert_eq!(res, Ok(None));
 
         db.del(&key);
-        assert_eq!(db.get(&key), Err(ExecuteError::KeyNotFound));
+        assert_eq!(db.get(&key), Err(RedisErr::KeyNotFound));
     }
 
     #[test]
@@ -432,7 +424,7 @@ mod tests {
         assert_eq!(res, Ok(None));
         assert_eq!(db.get(&key), Ok(val));
         std::thread::sleep(expire_from_now);
-        assert_eq!(db.get(&key), Err(ExecuteError::KeyNotFound));
+        assert_eq!(db.get(&key), Err(RedisErr::KeyNotFound));
     }
 
     #[test]

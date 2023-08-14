@@ -1,6 +1,6 @@
-use crate::{db::Database, frame::Frame};
+use super::check_cmd;
 
-use super::{check_cmd, CommandErr};
+use crate::{db::Database, frame::Frame, RedisErr};
 
 #[derive(Debug)]
 pub struct Quit {}
@@ -10,7 +10,7 @@ impl Quit {
         Quit {}
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Quit, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Quit, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"QUIT")?;
 

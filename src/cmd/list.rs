@@ -1,7 +1,7 @@
-use crate::cmd::check_cmd;
-use crate::cmd::{next_bytes, next_integer, next_string, CommandErr};
+use super::{check_cmd, next_bytes, next_integer, next_string};
 use crate::db::Database;
 use crate::frame::Frame;
+use crate::RedisErr;
 
 #[derive(Debug, PartialEq)]
 pub struct LPush {
@@ -14,7 +14,7 @@ impl LPush {
         Self { key, values }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"LPUSH")?;
 
@@ -40,10 +40,10 @@ impl LPush {
         match db.lpush(&self.key, self.values) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
-                crate::db::ExecuteError::WrongType => Frame::Error(
+                RedisErr::WrongType => Frame::Error(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
-                crate::db::ExecuteError::OutOfMemory => Frame::Error("Out of memory".to_string()),
+                RedisErr::OutOfMemory => Frame::Error("Out of memory".to_string()),
                 _ => unreachable!("unexpect lpush error: {:?}", e),
             },
         }
@@ -63,7 +63,7 @@ impl LRange {
         Self { key, start, stop }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"LRANGE")?;
         let key = next_string(&mut iter)?; // key
@@ -96,8 +96,8 @@ impl LRange {
                     .collect::<Vec<_>>(),
             ),
             Err(e) => match e {
-                crate::db::ExecuteError::KeyNotFound => Frame::Array(vec![]),
-                crate::db::ExecuteError::WrongType => Frame::Error(
+                RedisErr::KeyNotFound => Frame::Array(vec![]),
+                RedisErr::WrongType => Frame::Error(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
                 _ => unreachable!("unexpect lrange error: {:?}", e),

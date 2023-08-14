@@ -1,7 +1,7 @@
-use crate::cmd::check_cmd;
-use crate::cmd::{next_integer, next_string, CommandErr};
+use super::{check_cmd, next_integer, next_string};
 use crate::db::Database;
 use crate::frame::Frame;
+use crate::RedisErr;
 
 use std::time::{Duration, SystemTime};
 
@@ -15,9 +15,9 @@ impl Type {
         Self { key }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         if frames.len() != 2 {
-            return Err(CommandErr::WrongNumberOfArguments);
+            return Err(RedisErr::WrongNumberOfArguments);
         }
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"TYPE")?;
@@ -44,7 +44,7 @@ impl Del {
         Self { key }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"DEL")?;
         let key = next_string(&mut iter)?; // key
@@ -75,7 +75,7 @@ impl Expire {
         Self { key, expire }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"EXPIRE")?;
         let key = next_string(&mut iter)?; // key
@@ -98,7 +98,7 @@ impl Expire {
         match db.expire(&self.key, expire_at) {
             Ok(()) => Frame::Integer(1),
             Err(e) => match e {
-                crate::db::ExecuteError::KeyNotFound => Frame::Integer(0),
+                RedisErr::KeyNotFound => Frame::Integer(0),
                 _ => unreachable!("unexpect expire error: {:?}", e),
             },
         }

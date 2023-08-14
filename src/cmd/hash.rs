@@ -1,7 +1,8 @@
 use crate::cmd::check_cmd;
-use crate::cmd::{next_bytes, next_string, CommandErr};
+use crate::cmd::{next_bytes, next_string};
 use crate::db::Database;
 use crate::frame::Frame;
+use crate::RedisErr;
 
 #[derive(Debug)]
 pub struct HSet {
@@ -14,7 +15,7 @@ impl HSet {
         Self { key, field_values }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"HSET")?;
 
@@ -26,7 +27,7 @@ impl HSet {
             field_values.push((field, value));
         }
         if field_values.len() == 0 {
-            return Err(CommandErr::WrongNumberOfArguments);
+            return Err(RedisErr::WrongNumberOfArguments);
         }
         Ok(Self::new(key, field_values))
     }
@@ -35,7 +36,7 @@ impl HSet {
         match db.hset(self.key, self.field_values.clone()) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
-                crate::db::ExecuteError::WrongType => Frame::Error(
+                RedisErr::WrongType => Frame::Error(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
                 _ => unreachable!("unexpect hset error: {:?}", e),
@@ -55,7 +56,7 @@ impl HGet {
         Self { key, field }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"HGET")?;
 
@@ -71,8 +72,8 @@ impl HGet {
                 None => Frame::Nil,
             },
             Err(e) => match e {
-                crate::db::ExecuteError::KeyNotFound => Frame::Nil,
-                crate::db::ExecuteError::WrongType => Frame::Error(
+                RedisErr::KeyNotFound => Frame::Nil,
+                RedisErr::WrongType => Frame::Error(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
                 _ => unreachable!("unexpect hget error: {:?}", e),

@@ -9,19 +9,11 @@ version = "0.1.0"
 name = "redis-rs"
 path = "src/main.rs"
 
-[lib]
-# proc_macro = true
-
 [dependencies]
-# tokio = { version = "1.29.1", features = ["full"] }
 env_logger = {version = "0.10", features = ["default"]}
 log = {version = "0.4", features = ["std", "serde"]}
 mio = {version = "0.8", features = ["os-poll", "net"]}
-scopeguard = "1.1.0"
 skiplist = {version = "0.5.1"}
-casey = {version="0.4.0"}
-lazy_static = "1.4.0"
-syn = {version = "2.0.28"}
 
 [dependencies.marco]
 path="./marco"

@@ -27,38 +27,10 @@ mod db;
 pub use db::*;
 
 use crate::frame::Frame;
+use crate::RedisErr;
 use marco::to_upper_case_str;
-use std::fmt::Display;
 
 use log::trace;
-
-#[derive(Debug)]
-#[allow(dead_code)]
-pub enum CommandErr {
-    InvalidProtocol,
-    SyntaxError,
-    WrongNumberOfArguments,
-    InvalidArgument,
-    UnknownCommand,
-}
-
-impl Display for CommandErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CommandErr::InvalidProtocol => write!(f, "Invalid Protocol"),
-            CommandErr::SyntaxError => write!(f, "Syntax Error"),
-            CommandErr::WrongNumberOfArguments => write!(f, "Wrong Number Of Arguments"),
-            CommandErr::InvalidArgument => write!(f, "Invalid Argument"),
-            CommandErr::UnknownCommand => write!(f, "Unknown Command"),
-        }
-    }
-}
-
-impl From<std::string::FromUtf8Error> for CommandErr {
-    fn from(_: std::string::FromUtf8Error) -> Self {
-        CommandErr::InvalidArgument
-    }
-}
 
 macro_rules! def_command_enum {
         ($($cmd:ident),*) => {
@@ -69,17 +41,17 @@ macro_rules! def_command_enum {
             }
 
             impl Command {
-                pub fn from_frame(frame:Frame) -> Result<Self, CommandErr> {
+                pub fn from_frame(frame:Frame) -> Result<Self, RedisErr> {
                     trace!("from_frame: {:?}", frame);
                     if let Frame::Array(cmd) = frame {
                         Self::from_frames(cmd)
                     } else {
-                        Err(CommandErr::InvalidProtocol)
+                        Err(RedisErr::InvalidProtocol)
                     }
                 }
-                fn from_frames(frame: Vec<Frame>) -> Result<Self,CommandErr> {
+                fn from_frames(frame: Vec<Frame>) -> Result<Self,RedisErr> {
                     if frame.is_empty() {
-                        return Err(CommandErr::InvalidProtocol);
+                        return Err(RedisErr::InvalidProtocol);
                     }
 
                     let command = frame_to_string(&frame[0])?;
@@ -88,7 +60,7 @@ macro_rules! def_command_enum {
                         $(to_upper_case_str!($cmd) => {
                             trace!("cmd: {:?} got str: {:?}", stringify!($cmd), command);
                             Ok(Command::$cmd($cmd::from_frames(frame)?))},)*
-                        _ => Err(CommandErr::UnknownCommand),
+                        _ => Err(RedisErr::UnknownCommand),
                     }
                 }
 
@@ -112,60 +84,60 @@ def_command_enum! {
     Ping, Flush
 }
 
-fn frame_to_string(frame: &Frame) -> Result<String, CommandErr> {
+fn frame_to_string(frame: &Frame) -> Result<String, RedisErr> {
     match frame {
         Frame::SimpleString(s) => Ok(s.clone()),
         Frame::BulkString(bytes) => Ok(String::from_utf8(bytes.clone())?),
-        _ => Err(CommandErr::InvalidProtocol),
+        _ => Err(RedisErr::InvalidProtocol),
     }
 }
 
 #[inline]
-fn next_string(frame: &mut std::vec::IntoIter<Frame>) -> Result<String, CommandErr> {
+fn next_string(frame: &mut std::vec::IntoIter<Frame>) -> Result<String, RedisErr> {
     match frame.next() {
         Some(Frame::SimpleString(s)) => Ok(s),
         Some(Frame::BulkString(bytes)) => Ok(String::from_utf8(bytes)?),
-        None => Err(CommandErr::WrongNumberOfArguments),
-        _ => Err(CommandErr::InvalidProtocol),
+        None => Err(RedisErr::WrongNumberOfArguments),
+        _ => Err(RedisErr::InvalidProtocol),
     }
 }
 
 #[inline]
-fn next_bytes(frame: &mut std::vec::IntoIter<Frame>) -> Result<Vec<u8>, CommandErr> {
+fn next_bytes(frame: &mut std::vec::IntoIter<Frame>) -> Result<Vec<u8>, RedisErr> {
     match frame.next() {
         Some(Frame::SimpleString(s)) => Ok(s.into_bytes()),
         Some(Frame::BulkString(bytes)) => Ok(bytes),
-        None => Err(CommandErr::WrongNumberOfArguments),
-        _ => Err(CommandErr::InvalidProtocol),
+        None => Err(RedisErr::WrongNumberOfArguments),
+        _ => Err(RedisErr::InvalidProtocol),
     }
 }
 
 #[inline]
-fn next_integer(frame: &mut std::vec::IntoIter<Frame>) -> Result<i64, CommandErr> {
+fn next_integer(frame: &mut std::vec::IntoIter<Frame>) -> Result<i64, RedisErr> {
     match frame.next() {
         Some(Frame::Integer(i)) => Ok(i),
         Some(Frame::SimpleString(s)) => Ok(s.parse::<i64>().unwrap()),
-        None => Err(CommandErr::WrongNumberOfArguments),
-        _ => Err(CommandErr::InvalidProtocol),
+        None => Err(RedisErr::WrongNumberOfArguments),
+        _ => Err(RedisErr::InvalidProtocol),
     }
 }
 
 #[inline]
-fn next_float(frame: &mut std::vec::IntoIter<Frame>) -> Result<f64, CommandErr> {
+fn next_float(frame: &mut std::vec::IntoIter<Frame>) -> Result<f64, RedisErr> {
     match frame.next() {
         Some(Frame::SimpleString(s)) => Ok(s.parse::<f64>().unwrap()),
         Some(Frame::BulkString(bytes)) => Ok(String::from_utf8(bytes)?.parse::<f64>().unwrap()),
-        None => Err(CommandErr::WrongNumberOfArguments),
-        _ => Err(CommandErr::InvalidProtocol),
+        None => Err(RedisErr::WrongNumberOfArguments),
+        _ => Err(RedisErr::InvalidProtocol),
     }
 }
 
 #[inline]
-fn check_cmd(frame: &mut std::vec::IntoIter<Frame>, cmd: &[u8]) -> Result<(), CommandErr> {
+fn check_cmd(frame: &mut std::vec::IntoIter<Frame>, cmd: &[u8]) -> Result<(), RedisErr> {
     match frame.next() {
         Some(Frame::SimpleString(ref s)) if s.to_ascii_uppercase().as_bytes() == cmd => Ok(()),
         Some(Frame::BulkString(ref s)) if s.to_ascii_uppercase() == cmd => Ok(()),
-        None => Err(CommandErr::WrongNumberOfArguments),
-        _ => Err(CommandErr::InvalidProtocol),
+        None => Err(RedisErr::WrongNumberOfArguments),
+        _ => Err(RedisErr::InvalidProtocol),
     }
 }

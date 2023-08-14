@@ -3,15 +3,14 @@
 //! an event loop is used to handle all the IO events
 
 use std::collections::{HashMap, HashSet};
-use std::error::Error;
 use std::io::ErrorKind;
 use std::time::{Duration, SystemTime};
 
 use crate::cmd::Command;
 use crate::db::Database;
-use crate::err::ServerErr;
 use crate::frame::Frame;
 use crate::helper::{bytes_to_printable_string, read_request, write_response};
+use crate::RedisErr;
 
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
@@ -48,8 +47,8 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(addr: &str, port: u16, max_client: usize) -> Result<Self, Box<dyn Error>> {
-        let addr = format!("{}:{}", addr, port).parse()?;
+    pub fn new(addr: &str, port: u16, max_client: usize) -> Result<Self, RedisErr> {
+        let addr: std::net::SocketAddr = format!("{}:{}", addr, port).parse()?;
         let db = Database::new();
         let mut listener = TcpListener::bind(addr)?;
         let poll = Poll::new()?;
@@ -74,7 +73,7 @@ impl Server {
         })
     }
 
-    pub fn run(&mut self) -> Result<(), ServerErr> {
+    pub fn run(&mut self) -> Result<(), RedisErr> {
         while !self.shutdown {
             let (reads, writes) = self.collect_events();
             let resp_cnt = self.handle_writes(writes);
@@ -263,10 +262,10 @@ impl Server {
         self.poll.registry().deregister(&mut connection).unwrap();
     }
 
-    fn poll(&mut self, timeout: Option<Duration>) -> Result<(), ServerErr> {
+    fn poll(&mut self, timeout: Option<Duration>) -> Result<(), RedisErr> {
         self.poll
             .poll(&mut self.events, timeout)
-            .map_err(|_| ServerErr::PollError)
+            .map_err(|_| RedisErr::PollError)
     }
 
     fn idle(&mut self) {

@@ -1,7 +1,8 @@
-use crate::cmd::check_cmd;
-use crate::cmd::{next_bytes, next_integer, next_string, CommandErr};
+use super::{check_cmd, next_bytes, next_integer, next_string};
+
 use crate::db::Database;
 use crate::frame::Frame;
+use crate::RedisErr;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -16,7 +17,7 @@ impl Get {
         Self { key }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"GET")?;
         let key = next_string(&mut iter)?;
@@ -32,8 +33,8 @@ impl Get {
         match db.get(&self.key) {
             Ok(value) => Frame::BulkString(value),
             Err(e) => match e {
-                crate::db::ExecuteError::KeyNotFound => Frame::Nil,
-                crate::db::ExecuteError::WrongType => Frame::Error(
+                RedisErr::KeyNotFound => Frame::Nil,
+                RedisErr::WrongType => Frame::Error(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
                 _ => unreachable!("unexpect get error: {:?}", e),
@@ -52,7 +53,7 @@ impl MGet {
         Self { key }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"MGET").unwrap();
         let mut key = Vec::new();
@@ -60,7 +61,7 @@ impl MGet {
             key.push(next_string(&mut iter).unwrap());
         }
         if key.len() == 0 {
-            return Err(CommandErr::SyntaxError);
+            return Err(RedisErr::SyntaxError);
         }
         Ok(Self::new(key))
     }
@@ -71,8 +72,8 @@ impl MGet {
             match db.get(&k) {
                 Ok(value) => result.push(Frame::BulkString(value)),
                 Err(e) => match e {
-                    crate::db::ExecuteError::KeyNotFound => result.push(Frame::Nil),
-                    crate::db::ExecuteError::WrongType => result.push(Frame::Error(
+                    RedisErr::KeyNotFound => result.push(Frame::Nil),
+                    RedisErr::WrongType => result.push(Frame::Error(
                         "WRONGTYPE Operation against a key holding the wrong kind of value"
                             .to_string(),
                     )),
@@ -121,7 +122,7 @@ impl Set {
     }
 
     // SET key value [NX] [XX] [GET] [EX <seconds>] [PX <milliseconds>] [KEEPTTL]
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"SET")?;
 
@@ -150,19 +151,19 @@ impl Set {
                         Some(UNIX_EPOCH + Duration::from_millis(next_integer(&mut iter)? as u64));
                 }
                 _ => {
-                    return Err(CommandErr::SyntaxError);
+                    return Err(RedisErr::SyntaxError);
                 }
             }
         }
 
         if nx && xx {
-            return Err(CommandErr::SyntaxError);
+            return Err(RedisErr::SyntaxError);
         }
         if ex.is_some() && exat.is_some() {
-            return Err(CommandErr::SyntaxError);
+            return Err(RedisErr::SyntaxError);
         }
         if keepttl && (ex.is_some() || exat.is_some()) {
-            return Err(CommandErr::SyntaxError);
+            return Err(RedisErr::SyntaxError);
         }
 
         Ok(Self::new(key, value, nx, xx, get, ex, exat, keepttl))
@@ -196,11 +197,11 @@ impl Set {
             Ok(Some(value)) => Frame::BulkString(value),
             Ok(None) => Frame::SimpleString("OK".to_string()),
             Err(e) => match e {
-                crate::db::ExecuteError::NoAction => Frame::Nil,
-                crate::db::ExecuteError::WrongType => Frame::Error(
+                RedisErr::NoAction => Frame::Nil,
+                RedisErr::WrongType => Frame::Error(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
-                crate::db::ExecuteError::OutOfMemory => Frame::Error("Out of memory".to_string()),
+                RedisErr::OutOfMemory => Frame::Error("Out of memory".to_string()),
                 _ => unreachable!("unexpect set error: {:?}", e),
             },
         }
@@ -217,7 +218,7 @@ impl MSet {
         Self { pairs }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"MSET")?;
 
@@ -228,7 +229,7 @@ impl MSet {
             pairs.push((key, value));
         }
         if pairs.len() == 0 {
-            return Err(CommandErr::SyntaxError);
+            return Err(RedisErr::SyntaxError);
         }
         Ok(Self::new(pairs))
     }
@@ -238,9 +239,7 @@ impl MSet {
             match db.set(key, value, false, false, false, false, None) {
                 Ok(_) => {}
                 Err(e) => match e {
-                    crate::db::ExecuteError::OutOfMemory => {
-                        return Frame::Error("Out of memory".to_string())
-                    }
+                    RedisErr::OutOfMemory => return Frame::Error("Out of memory".to_string()),
                     _ => unreachable!("unexpect set error: {:?}", e),
                 },
             }

@@ -1,7 +1,8 @@
 use crate::cmd::check_cmd;
-use crate::cmd::CommandErr;
+
 use crate::db::Database;
 use crate::frame::Frame;
+use crate::RedisErr;
 
 use super::next_bytes;
 
@@ -15,9 +16,9 @@ impl Ping {
         Self { message }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         if frames.len() > 2 {
-            return Err(CommandErr::WrongNumberOfArguments);
+            return Err(RedisErr::WrongNumberOfArguments);
         }
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"PING")?;
@@ -46,9 +47,9 @@ impl Flush {
         Self {}
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         if frames.len() != 1 {
-            return Err(CommandErr::WrongNumberOfArguments);
+            return Err(RedisErr::WrongNumberOfArguments);
         }
         check_cmd(&mut frames.into_iter(), b"FLUSH")?;
         Ok(Self::new())

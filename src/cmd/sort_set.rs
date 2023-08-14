@@ -1,7 +1,7 @@
-use crate::cmd::check_cmd;
-use crate::cmd::{next_bytes, next_float, next_string, CommandErr};
+use super::{check_cmd, next_bytes, next_float, next_string};
 use crate::db::Database;
 use crate::frame::Frame;
+use crate::RedisErr;
 
 #[derive(Debug)]
 pub struct ZAdd {
@@ -39,9 +39,9 @@ impl ZAdd {
     }
 
     // ZADD key [NX|XX] [CH] [INCR] score member [score member ...]
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         if frames.len() < 3 {
-            return Err(CommandErr::WrongNumberOfArguments);
+            return Err(RedisErr::WrongNumberOfArguments);
         }
 
         let mut iter = frames.into_iter();
@@ -81,16 +81,16 @@ impl ZAdd {
                     incr = true;
                     continue;
                 }
-                s => break s.parse::<f64>().map_err(|_| CommandErr::SyntaxError)?,
+                s => break s.parse::<f64>().map_err(|_| RedisErr::SyntaxError)?,
             };
         };
 
         // conflict options
         if nx && xx {
-            return Err(CommandErr::SyntaxError);
+            return Err(RedisErr::SyntaxError);
         }
         if lt && gt {
-            return Err(CommandErr::SyntaxError);
+            return Err(RedisErr::SyntaxError);
         }
 
         let member = next_bytes(&mut iter)?; // member
@@ -110,10 +110,10 @@ impl ZAdd {
         ) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
-                crate::db::ExecuteError::WrongType => Frame::Error(
+                RedisErr::WrongType => Frame::Error(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
-                crate::db::ExecuteError::OutOfMemory => Frame::Error("Out of memory".to_string()),
+                RedisErr::OutOfMemory => Frame::Error("Out of memory".to_string()),
                 _ => unreachable!("unexpect zadd error: {:?}", e),
             },
         }
@@ -130,9 +130,9 @@ impl ZCard {
         Self { key }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         if frames.len() != 2 {
-            return Err(CommandErr::WrongNumberOfArguments);
+            return Err(RedisErr::WrongNumberOfArguments);
         }
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"ZCARD")?;
@@ -144,8 +144,8 @@ impl ZCard {
         match db.zcard(&self.key) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
-                crate::db::ExecuteError::KeyNotFound => Frame::Integer(0),
-                crate::db::ExecuteError::WrongType => Frame::Error(
+                RedisErr::KeyNotFound => Frame::Integer(0),
+                RedisErr::WrongType => Frame::Error(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
                 _ => unreachable!("unexpect zcard error: {:?}", e),
@@ -165,9 +165,9 @@ impl ZRem {
         Self { key, members }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CommandErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         if frames.len() < 3 {
-            return Err(CommandErr::WrongNumberOfArguments);
+            return Err(RedisErr::WrongNumberOfArguments);
         }
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"ZREM")?;
@@ -184,8 +184,8 @@ impl ZRem {
         match db.zrem(&self.key, self.members) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
-                crate::db::ExecuteError::KeyNotFound => Frame::Integer(0),
-                crate::db::ExecuteError::WrongType => Frame::Error(
+                RedisErr::KeyNotFound => Frame::Integer(0),
+                RedisErr::WrongType => Frame::Error(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
                 _ => unreachable!("unexpect zrem error: {:?}", e),
