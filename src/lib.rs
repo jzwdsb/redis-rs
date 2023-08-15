@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+mod traits;
+
 mod cmd;
 
 mod data;
@@ -14,23 +16,28 @@ pub mod server;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum RedisErr {
+    // Frame Error
     FrameIncomplete,
     FrameMalformed,
 
+    // Command Error
     InvalidProtocol,
     SyntaxError,
     WrongNumberOfArguments,
     InvalidArgument,
     UnknownCommand,
 
+    // DB Error
     NoAction,
     WrongType,
     KeyNotFound,
     OutOfMemory,
 
+    // Server Error
     WrongAddressFormat,
     IOError,
     PollError,
+    ConnectionAborted,
 }
 
 impl std::error::Error for RedisErr {}

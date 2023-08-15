@@ -106,10 +106,35 @@ impl Server {
             match read {
                 // handle new connection
                 Token(0) => self.accept_new_connection(),
-                token => self.handle_request(token),
+                token => match self.handle_request(token) {
+                    Ok(resp) => {
+                        match resp {
+                            Some(resp) => {
+                                self.response.insert(token, resp.serialize());
+                                self.invert_interest(token, Interest::WRITABLE);
+                            }
+                            None => {
+                                // do nothing, keep waiting for the next request
+                                // self.invert_interest(token, Interest::READABLE);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.handle_error(token, e);
+                    }
+                },
             }
         }
         count
+    }
+
+    fn handle_error(&mut self, token: Token, err: RedisErr) {
+        match err {
+            RedisErr::ConnectionAborted => self.drop_conncetion(&token),
+            _ => {
+                error!("Error: {:?}", err);
+            }
+        }
     }
 
     fn handle_writes(&mut self, writes: HashSet<Token>) -> usize {
@@ -139,74 +164,87 @@ impl Server {
         count
     }
 
-    fn handle_request(&mut self, token: Token) {
-        let req_data = match read_request(self.sockets.get_mut(&token).unwrap()) {
-            Ok(req_data) => match self.requests.remove(&token) {
-                Some(mut prev_bytes) => {
-                    prev_bytes.extend_from_slice(&req_data);
-                    prev_bytes
-                }
-                None => req_data,
-            },
-            Err(ref e) if e.kind() == ErrorKind::ConnectionAborted => {
-                // connection closed
-                trace!("Connection closed: {:?}", token);
-                self.drop_conncetion(token);
-                return;
-            }
-            Err(e) => {
-                warn!("Failed to read request: {}", e);
-                return;
-            }
-        };
+    fn handle_request(&mut self, token: Token) -> Result<Option<Frame>, RedisErr> {
+        let req_data = self.read_request(&token)?;
         trace!(
             "Read request from token {:?}, : {:?}",
             token,
             bytes_to_printable_string(&req_data)
         );
-        let frame = match Frame::from_bytes(&req_data) {
-            Ok(frame) => frame,
-            Err(ref e) if e.is_incomplete() => {
-                // incomplete frame, wait for next read
-                trace!("Incomplete frame: {:?}", token);
-                self.requests.insert(token, req_data);
-                return;
-            }
-            Err(e) => {
-                trace!("Failed to parse protocol: {}", e);
-                return;
-            }
-        };
+        let frame = self.decode_request(&token, req_data)?;
 
-        let command = match Command::from_frame(frame) {
+        let command = self.decode_frame(frame)?;
+
+        let resp = self.apply_command(&token, command);
+
+        trace!("Apply command from token {:?}: {:?}", token, resp);
+
+        // append response to the response buffer
+
+        Ok(resp)
+    }
+
+    fn decode_frame(&mut self, data: Frame) -> Result<Command, RedisErr> {
+        match Command::from_frame(data) {
             Ok(command) => {
                 // complete frame and successful parse command from the frame
                 // must have reponse to send back
                 // invert interest to writable
-                match command {
-                    Command::Quit(_) => {
-                        self.drop_conncetion(token);
-                        return;
-                    }
-                    _ => {}
-                }
-                self.invert_interest(token, Interest::WRITABLE);
-                command
+                Ok(command)
             }
 
             Err(e) => {
                 // invalid command, ignore this command
                 debug!("Failed to parse command: {}", e);
-                return;
+                Err(e)
             }
-        };
+        }
+    }
 
-        let resp = command.apply(&mut self.db);
+    fn decode_request(&mut self, token: &Token, data: Vec<u8>) -> Result<Frame, RedisErr> {
+        match Frame::from_bytes(&data) {
+            Ok(frame) => Ok(frame),
+            Err(ref e) if e.is_incomplete() => {
+                // incomplete frame, wait for next read
+                self.requests.insert(token.clone(), data);
+                Err(RedisErr::FrameIncomplete)
+            }
+            Err(e) => {
+                trace!("Failed to parse protocol: {}", e);
+                Err(RedisErr::FrameMalformed)
+            }
+        }
+    }
 
-        trace!("Apply command from token {:?}: {:?}", token, resp);
+    fn apply_command(&mut self, token: &Token, command: Command) -> Option<Frame> {
+        match command {
+            Command::Quit(_) => {
+                self.drop_conncetion(token);
+                None
+            }
+            _ => Some(command.apply(&mut self.db)),
+        }
+    }
 
-        // append response to the response buffer
-        self.set_resp(token, resp.serialize());
+    fn read_request(&mut self, token: &Token) -> Result<Vec<u8>, RedisErr> {
+        match read_request(self.sockets.get_mut(&token).unwrap()) {
+            Ok(req_data) => match self.requests.remove(&token) {
+                Some(mut prev_bytes) => {
+                    prev_bytes.extend_from_slice(&req_data);
+                    Ok(prev_bytes)
+                }
+                None => Ok(req_data),
+            },
+            Err(ref e) if e.kind() == ErrorKind::ConnectionAborted => {
+                // connection closed
+                trace!("Connection closed: {:?}", token);
+                return Err(RedisErr::ConnectionAborted);
+            }
+            Err(e) => {
+                warn!("Failed to read request: {}", e);
+                return Err(RedisErr::IOError);
+            }
+        }
     }
 
     fn send_response(&mut self, token: Token, data: Vec<u8>) -> Vec<u8> {
@@ -253,7 +291,7 @@ impl Server {
             .extend(resp);
     }
 
-    fn drop_conncetion(&mut self, token: Token) {
+    fn drop_conncetion(&mut self, token: &Token) {
         let connection = self.sockets.remove(&token);
         if connection.is_none() {
             return;
