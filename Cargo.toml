@@ -17,3 +17,6 @@ skiplist = {version = "0.5.1"}
 
 [dependencies.marco]
 path="./marco"
+
+[dependencies.trie]
+path="./trie"

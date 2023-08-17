@@ -86,9 +86,8 @@ impl Database {
         if keepttl && old.is_some() {
             entry.expire_at = old.unwrap().expire_at;
         }
-        if entry.expire_at.is_some() {
-            self.expire_table
-                .insert(key.clone(), entry.expire_at.unwrap());
+        if let Some(expire_at) = entry.expire_at {
+            self.expire_table.insert(key.clone(), expire_at);
         }
 
         let old = self.table.insert(key, entry);

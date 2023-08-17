@@ -171,8 +171,8 @@ impl Frame {
             b if b.is_ascii_alphanumeric() => {
                 let mut data = data;
                 let index = index_of(data, CRLF);
-                if index.is_some() {
-                    data = &data[..index.unwrap()];
+                if let Some(idx) = index {
+                    data = &data[..idx];
                 }
 
                 let s = String::from_utf8(data.to_vec())?;
