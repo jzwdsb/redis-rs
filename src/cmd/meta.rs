@@ -27,7 +27,7 @@ impl Type {
         Ok(Self::new(key))
     }
 
-    pub fn apply(self: Box<Self>, db: &Database) -> Frame {
+    pub fn apply(self, db: &Database) -> Frame {
         match db.get_type(&self.key) {
             Some(t) => Frame::SimpleString(t.to_string()),
             None => Frame::SimpleString("none".to_string()),
@@ -58,7 +58,7 @@ impl Del {
         &self.key
     }
 
-    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut Database) -> Frame {
         match db.del(&self.key) {
             Some(_) => Frame::Integer(1),
             None => Frame::Integer(0),
@@ -95,7 +95,7 @@ impl Expire {
         &self.expire
     }
 
-    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut Database) -> Frame {
         let expire_at = SystemTime::now() + self.expire;
         match db.expire(&self.key, expire_at) {
             Ok(()) => Frame::Integer(1),
@@ -119,7 +119,7 @@ mod test {
             Frame::BulkString(b"key".to_vec()),
         ])
         .unwrap();
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::Integer(0));
     }
 
@@ -132,7 +132,7 @@ mod test {
             Frame::Integer(10),
         ])
         .unwrap();
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::Integer(0));
     }
 
@@ -144,7 +144,7 @@ mod test {
             Frame::BulkString(b"key".to_vec()),
         ])
         .unwrap();
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::SimpleString("none".to_string()));
     }
 }

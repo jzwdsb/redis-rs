@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::time::{Duration, SystemTime};
 
-// use crate::cmd::Command;
+use crate::cmd::Command;
 use crate::db::Database;
 use crate::frame::Frame;
 use crate::helper::{bytes_to_printable_string, read_request, write_response};
@@ -189,9 +189,9 @@ impl Server {
     fn decode_frame(
         &mut self,
         frame: Frame,
-    ) -> Result<Box<dyn crate::cmd::CommandApplyer>, RedisErr> {
+    ) -> Result<Command, RedisErr> {
         match self.command_parser.parse(frame) {
-            Ok(command) => Ok(command.into()),
+            Ok(command) => Ok(command),
             Err(e) => {
                 debug!("Failed to parse command: {}", e);
                 Err(e)
@@ -214,7 +214,7 @@ impl Server {
         }
     }
 
-    fn apply_command(&mut self, command: Box<dyn crate::cmd::CommandApplyer>) -> Option<Frame> {
+    fn apply_command(&mut self, command: Command) -> Option<Frame> {
         Some(command.apply(&mut self.db))
     }
 

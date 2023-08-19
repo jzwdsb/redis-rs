@@ -106,7 +106,7 @@ impl ZAdd {
         Ok(Self::new(key, nx, xx, lt, gt, ch, incr, zset))
     }
 
-    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut Database) -> Frame {
         match db.zadd(
             &self.key, self.nx, self.xx, self.lt, self.gt, self.ch, self.incr, self.zset,
         ) {
@@ -142,7 +142,7 @@ impl ZCard {
         Ok(Self::new(key))
     }
 
-    pub fn apply(self: Box<Self>, db: &Database) -> Frame {
+    pub fn apply(self, db: &Database) -> Frame {
         match db.zcard(&self.key) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
@@ -182,7 +182,7 @@ impl ZRem {
         Ok(Self::new(key, members))
     }
 
-    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut Database) -> Frame {
         match db.zrem(&self.key, self.members) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
@@ -210,7 +210,7 @@ mod test {
             Frame::BulkString(b"one".to_vec()),
         ])
         .unwrap();
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::Integer(1));
     }
 
@@ -222,7 +222,7 @@ mod test {
             Frame::BulkString(b"key".to_vec()),
         ])
         .unwrap();
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::Integer(0));
     }
 
@@ -235,7 +235,7 @@ mod test {
             Frame::BulkString(b"one".to_vec()),
         ])
         .unwrap();
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::Integer(0));
     }
 }

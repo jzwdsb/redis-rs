@@ -35,7 +35,7 @@ use trie::Trie;
 
 use log::trace;
 
-type CommandParseFn = Box<dyn Fn(Vec<Frame>) -> Result<Box<dyn CommandApplyer>, RedisErr>>;
+type CommandParseFn = Box<dyn Fn(Vec<Frame>) -> Result<Command, RedisErr>>;
 
 pub struct Parser {
     trie: Trie<CommandParseFn>,
@@ -52,8 +52,8 @@ pub trait CommandApplyer {
 macro_rules! add_tire {
     ($tire:ident, $($cmd:ident),*) => {
         $(
-            $tire.insert(to_upper_case_str!($cmd), Box::new(|frames: Vec<Frame>| -> Result<Box<dyn CommandApplyer>, RedisErr> {
-                Ok($cmd::parse(frames)?)
+            $tire.insert(to_upper_case_str!($cmd), Box::new(|frames: Vec<Frame>| -> Result<Command, RedisErr> {
+                Ok(Command::$cmd($cmd::from_frames(frames)?))
             }));
         )*
     };
@@ -69,7 +69,7 @@ impl Parser {
         Self { trie }
     }
 
-    pub fn parse(&self, frame: Frame) -> Result<Box<dyn CommandApplyer>, RedisErr> {
+    pub fn parse(&self, frame: Frame) -> Result<Command, RedisErr> {
         trace!("parse: {:?}", frame);
         if let Frame::Array(frames) = frame {
             self.trie
@@ -90,25 +90,26 @@ macro_rules! def_command_enum {
                 $($cmd($cmd),)*
             }
 
-            // impl Command {
-            //     pub fn apply(self: Box<Self>, db: &mut crate::db::Database) -> Frame {
-            //         trace!("apply command: {:?}", self);
-            //     match self {
-            //         $(Command::$cmd(cmd) => Box::new(cmd).apply(db),)*
-            //     }
-            // }
+            impl Command {
+                pub fn apply(self, db: &mut crate::db::Database) -> Frame {
+                    trace!("apply command: {:?}", self);
+                match self {
+                    $(Command::$cmd(cmd) => cmd.apply(db),)*
+                }
+            }
         }
+    }
 }
 
-// def_command_enum! {
-//     Get, MGet, Set, MSet,
-//     LPush, LRange,
-//     HSet, HGet,
-//     ZAdd, ZCard, ZRem,
-//     Del, Expire, Type,
-//     Quit,
-//     Ping, Flush
-// }
+def_command_enum! {
+    Get, MGet, Set, MSet,
+    LPush, LRange,
+    HSet, HGet,
+    ZAdd, ZCard, ZRem,
+    Del, Expire, Type,
+    Quit,
+    Ping, Flush
+}
 
 fn frame_to_string(frame: &Frame) -> Result<String, RedisErr> {
     match frame {

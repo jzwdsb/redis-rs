@@ -20,7 +20,7 @@ impl Quit {
         Ok(Quit::new())
     }
 
-    pub fn apply(self: Box<Self>, _db: &mut Database) -> Frame {
+    pub fn apply(self, _db: &mut Database) -> Frame {
         Frame::SimpleString("OK".to_string())
     }
 }

@@ -29,7 +29,7 @@ impl Ping {
         Ok(Self::new(message))
     }
 
-    pub fn apply(self: Box<Self>, _db: &mut Database) -> Frame {
+    pub fn apply(self, _db: &mut Database) -> Frame {
         if let Some(message) = self.message {
             Frame::BulkString(message)
         } else {
@@ -54,7 +54,7 @@ impl Flush {
         Ok(Self::new())
     }
 
-    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut Database) -> Frame {
         db.flush();
         Frame::SimpleString("OK".to_string())
     }
@@ -71,7 +71,7 @@ mod test {
         assert_eq!(cmd.is_ok(), true);
         let cmd: Flush = cmd.unwrap();
 
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::SimpleString("OK".to_string()));
     }
 }

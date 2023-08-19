@@ -30,7 +30,7 @@ impl Get {
         &self.key
     }
 
-    fn apply(self: Box<Self>, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut Database) -> Frame {
         match db.get(&self.key) {
             Ok(value) => Frame::BulkString(value),
             Err(e) => match e {
@@ -67,7 +67,7 @@ impl MGet {
         Ok(Self::new(key))
     }
 
-    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut Database) -> Frame {
         let mut result = Vec::new();
         for k in self.key {
             match db.get(&k) {
@@ -180,7 +180,7 @@ impl Set {
         &self.value
     }
 
-    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut Database) -> Frame {
         let expire_at = match (self.ex, self.exat) {
             (Some(d), None) => Some(SystemTime::now() + d),
             (None, Some(t)) => Some(t),
@@ -235,7 +235,7 @@ impl MSet {
         Ok(Self::new(pairs))
     }
 
-    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut Database) -> Frame {
         for (key, value) in self.pairs {
             match db.set(key, value, false, false, false, false, None) {
                 Ok(_) => {}
@@ -261,7 +261,7 @@ mod test {
             Frame::BulkString(b"key".to_vec()),
         ])
         .unwrap();
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::Nil);
     }
 
@@ -275,7 +275,7 @@ mod test {
         ])
         .unwrap();
 
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::Array(vec![Frame::Nil, Frame::Nil]));
     }
 
@@ -291,7 +291,7 @@ mod test {
         ])
         .unwrap();
 
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::SimpleString("Ok".to_string()));
     }
 
@@ -304,7 +304,7 @@ mod test {
             Frame::BulkString(b"value".to_vec()),
         ])
         .unwrap();
-        let result = Box::new(cmd).apply(&mut db);
+        let result = cmd.apply(&mut db);
         assert_eq!(result, Frame::SimpleString("OK".to_string()));
     }
 }
