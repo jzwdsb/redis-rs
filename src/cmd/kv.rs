@@ -1,12 +1,13 @@
-use super::{check_cmd, next_bytes, next_integer, next_string};
-
+use super::*;
 use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
 
+use marco::{Applyer, CommandParser};
+
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Debug)]
+#[derive(Debug, Applyer, CommandParser)]
 pub struct Get {
     key: String,
 }
@@ -29,7 +30,7 @@ impl Get {
         &self.key
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    fn apply(self: Box<Self>, db: &mut Database) -> Frame {
         match db.get(&self.key) {
             Ok(value) => Frame::BulkString(value),
             Err(e) => match e {
@@ -43,7 +44,7 @@ impl Get {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Applyer, CommandParser)]
 pub struct MGet {
     key: Vec<String>,
 }
@@ -66,7 +67,7 @@ impl MGet {
         Ok(Self::new(key))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
         let mut result = Vec::new();
         for k in self.key {
             match db.get(&k) {
@@ -85,7 +86,7 @@ impl MGet {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Applyer, CommandParser)]
 pub struct Set {
     key: String,
     value: Vec<u8>,
@@ -179,7 +180,7 @@ impl Set {
         &self.value
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
         let expire_at = match (self.ex, self.exat) {
             (Some(d), None) => Some(SystemTime::now() + d),
             (None, Some(t)) => Some(t),
@@ -208,7 +209,7 @@ impl Set {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Applyer, CommandParser)]
 pub struct MSet {
     pairs: Vec<(String, Vec<u8>)>,
 }
@@ -234,7 +235,7 @@ impl MSet {
         Ok(Self::new(pairs))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
         for (key, value) in self.pairs {
             match db.set(key, value, false, false, false, false, None) {
                 Ok(_) => {}
@@ -260,7 +261,7 @@ mod test {
             Frame::BulkString(b"key".to_vec()),
         ])
         .unwrap();
-        let result = cmd.apply(&mut db);
+        let result = Box::new(cmd).apply(&mut db);
         assert_eq!(result, Frame::Nil);
     }
 
@@ -274,7 +275,7 @@ mod test {
         ])
         .unwrap();
 
-        let result = cmd.apply(&mut db);
+        let result = Box::new(cmd).apply(&mut db);
         assert_eq!(result, Frame::Array(vec![Frame::Nil, Frame::Nil]));
     }
 
@@ -290,7 +291,7 @@ mod test {
         ])
         .unwrap();
 
-        let result = cmd.apply(&mut db);
+        let result = Box::new(cmd).apply(&mut db);
         assert_eq!(result, Frame::SimpleString("Ok".to_string()));
     }
 
@@ -303,7 +304,7 @@ mod test {
             Frame::BulkString(b"value".to_vec()),
         ])
         .unwrap();
-        let result = cmd.apply(&mut db);
+        let result = Box::new(cmd).apply(&mut db);
         assert_eq!(result, Frame::SimpleString("OK".to_string()));
     }
 }

@@ -5,3 +5,7 @@ version="0.1.0"
 
 [lib]
 proc_macro=true
+
+[dependencies]
+syn = "2.0.29"
+quote = "1.0.33"

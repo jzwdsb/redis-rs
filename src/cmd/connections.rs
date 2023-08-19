@@ -1,8 +1,11 @@
-use super::check_cmd;
+use super::*;
+use crate::db::Database;
+use crate::frame::Frame;
+use crate::RedisErr;
 
-use crate::{db::Database, frame::Frame, RedisErr};
+use marco::{Applyer, CommandParser};
 
-#[derive(Debug)]
+#[derive(Debug, Applyer, CommandParser)]
 pub struct Quit {}
 
 impl Quit {
@@ -17,7 +20,7 @@ impl Quit {
         Ok(Quit::new())
     }
 
-    pub fn apply(&self, _db: &mut Database) -> Frame {
+    pub fn apply(self: Box<Self>, _db: &mut Database) -> Frame {
         Frame::SimpleString("OK".to_string())
     }
 }

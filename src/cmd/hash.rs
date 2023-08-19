@@ -1,10 +1,11 @@
-use crate::cmd::check_cmd;
-use crate::cmd::{next_bytes, next_string};
+use super::*;
 use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
 
-#[derive(Debug)]
+use marco::{Applyer, CommandParser};
+
+#[derive(Debug, Applyer, CommandParser)]
 pub struct HSet {
     key: String,
     field_values: Vec<(String, Vec<u8>)>,
@@ -32,7 +33,7 @@ impl HSet {
         Ok(Self::new(key, field_values))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
         match db.hset(self.key, self.field_values.clone()) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
@@ -45,7 +46,7 @@ impl HSet {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Applyer, CommandParser)]
 pub struct HGet {
     key: String,
     field: String,
@@ -65,7 +66,7 @@ impl HGet {
         Ok(Self::new(key, field))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
         match db.hget(&self.key, &self.field) {
             Ok(value) => match value {
                 Some(v) => Frame::BulkString(v),
@@ -96,7 +97,7 @@ mod test {
             Frame::BulkString(b"value".to_vec()),
         ])
         .unwrap();
-        let result = cmd.apply(&mut db);
+        let result = Box::new(cmd).apply(&mut db);
         assert_eq!(result, Frame::Integer(1));
     }
 
@@ -109,7 +110,7 @@ mod test {
             Frame::BulkString(b"field".to_vec()),
         ])
         .unwrap();
-        let result = cmd.apply(&mut db);
+        let result = Box::new(cmd).apply(&mut db);
         assert_eq!(result, Frame::Nil);
     }
 }

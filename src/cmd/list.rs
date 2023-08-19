@@ -1,9 +1,10 @@
-use super::{check_cmd, next_bytes, next_integer, next_string};
+use super::*;
 use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
 
-#[derive(Debug, PartialEq)]
+use marco::{Applyer, CommandParser};
+#[derive(Debug, Applyer, CommandParser)]
 pub struct LPush {
     key: String,
     values: Vec<Vec<u8>>,
@@ -36,7 +37,7 @@ impl LPush {
         &self.values
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
         match db.lpush(&self.key, self.values) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
@@ -50,7 +51,7 @@ impl LPush {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Applyer, CommandParser)]
 pub struct LRange {
     key: String,
     start: i64,
@@ -87,7 +88,7 @@ impl LRange {
         self.stop
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self: Box<Self>, db: &mut Database) -> Frame {
         match db.lrange(&self.key, self.start, self.stop) {
             Ok(values) => Frame::Array(
                 values
@@ -121,7 +122,7 @@ mod test {
             Frame::BulkString(b"3".to_vec()),
         ])
         .unwrap();
-        let result = cmd.apply(&mut db);
+        let result = Box::new(cmd).apply(&mut db);
         assert_eq!(result, Frame::Integer(3));
     }
 
@@ -135,7 +136,7 @@ mod test {
             Frame::Integer(-1),
         ])
         .unwrap();
-        let result = cmd.apply(&mut db);
+        let result = Box::new(cmd).apply(&mut db);
         assert_eq!(result, Frame::Array(vec![]));
     }
 }

@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::time::{Duration, SystemTime};
 
-use crate::cmd::Command;
+// use crate::cmd::Command;
 use crate::db::Database;
 use crate::frame::Frame;
 use crate::helper::{bytes_to_printable_string, read_request, write_response};
@@ -42,6 +42,7 @@ pub struct Server {
     sockets: HashMap<Token, TcpStream>,
     token_count: Token,
     wait_duration: Duration,
+    command_parser: crate::cmd::Parser,
     requests: HashMap<Token, Vec<u8>>,
     response: HashMap<Token, Vec<u8>>,
 }
@@ -68,6 +69,7 @@ impl Server {
             sockets: HashMap::new(),
             token_count: Token(1),
             wait_duration: Duration::from_millis(100),
+            command_parser: crate::cmd::Parser::new(),
             response: HashMap::new(),
             requests: HashMap::new(),
         })
@@ -110,7 +112,7 @@ impl Server {
                     Ok(resp) => {
                         match resp {
                             Some(resp) => {
-                                self.response.insert(token, resp.serialize());
+                                self.set_resp(token, resp.serialize());
                                 self.invert_interest(token, Interest::WRITABLE);
                             }
                             None => {
@@ -175,7 +177,7 @@ impl Server {
 
         let command = self.decode_frame(frame)?;
 
-        let resp = self.apply_command(&token, command);
+        let resp = self.apply_command(command);
 
         trace!("Apply command from token {:?}: {:?}", token, resp);
 
@@ -184,17 +186,13 @@ impl Server {
         Ok(resp)
     }
 
-    fn decode_frame(&mut self, data: Frame) -> Result<Command, RedisErr> {
-        match Command::from_frame(data) {
-            Ok(command) => {
-                // complete frame and successful parse command from the frame
-                // must have reponse to send back
-                // invert interest to writable
-                Ok(command)
-            }
-
+    fn decode_frame(
+        &mut self,
+        frame: Frame,
+    ) -> Result<Box<dyn crate::cmd::CommandApplyer>, RedisErr> {
+        match self.command_parser.parse(frame) {
+            Ok(command) => Ok(command.into()),
             Err(e) => {
-                // invalid command, ignore this command
                 debug!("Failed to parse command: {}", e);
                 Err(e)
             }
@@ -216,14 +214,8 @@ impl Server {
         }
     }
 
-    fn apply_command(&mut self, token: &Token, command: Command) -> Option<Frame> {
-        match command {
-            Command::Quit(_) => {
-                self.drop_conncetion(token);
-                None
-            }
-            _ => Some(command.apply(&mut self.db)),
-        }
+    fn apply_command(&mut self, command: Box<dyn crate::cmd::CommandApplyer>) -> Option<Frame> {
+        Some(command.apply(&mut self.db))
     }
 
     fn read_request(&mut self, token: &Token) -> Result<Vec<u8>, RedisErr> {
