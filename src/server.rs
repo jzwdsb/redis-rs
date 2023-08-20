@@ -2,17 +2,16 @@
 //! use mio to achieve non-blocking IO, multiplexing and event driven
 //! an event loop is used to handle all the IO events
 
-use std::collections::{HashMap, HashSet};
-use std::io::ErrorKind;
-use std::time::{Duration, SystemTime};
-
 use crate::cmd::Command;
+use crate::connection::Connection;
 use crate::db::Database;
 use crate::frame::Frame;
-use crate::helper::{bytes_to_printable_string, read_request, write_response};
 use crate::RedisErr;
 
-use mio::net::{TcpListener, TcpStream};
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, SystemTime};
+
+use mio::net::TcpListener;
 use mio::{Events, Interest, Poll, Token};
 
 #[allow(unused_imports)]
@@ -39,12 +38,11 @@ pub struct Server {
     poll: Poll,
     listener: TcpListener,
     events: Events,
-    sockets: HashMap<Token, TcpStream>,
+    sockets: HashMap<Token, Connection>,
     token_count: Token,
     wait_duration: Duration,
     command_parser: crate::cmd::Parser,
-    requests: HashMap<Token, Vec<u8>>,
-    response: HashMap<Token, Vec<u8>>,
+    response: HashMap<Token, Frame>,
 }
 
 impl Server {
@@ -71,7 +69,6 @@ impl Server {
             wait_duration: Duration::from_millis(100),
             command_parser: crate::cmd::Parser::new(),
             response: HashMap::new(),
-            requests: HashMap::new(),
         })
     }
 
@@ -110,15 +107,9 @@ impl Server {
                 Token(0) => self.accept_new_connection(),
                 token => match self.handle_request(token) {
                     Ok(resp) => {
-                        match resp {
-                            Some(resp) => {
-                                self.set_resp(token, resp.serialize());
-                                self.invert_interest(token, Interest::WRITABLE);
-                            }
-                            None => {
-                                // do nothing, keep waiting for the next request
-                                // self.invert_interest(token, Interest::READABLE);
-                            }
+                        if let Some(resp) = resp {
+                            self.set_resp(token, resp);
+                            self.invert_interest(token, Interest::WRITABLE);
                         }
                     }
                     Err(e) => {
@@ -156,40 +147,25 @@ impl Server {
         let count = can_write.len();
         for token in can_write {
             let resp = self.response.remove(&token).unwrap();
-            let left = self.send_response(token, resp);
-            if !left.is_empty() {
-                self.response.insert(token, left);
-                continue;
-            }
+            self.send_response(token, resp);
             self.invert_interest(token, Interest::READABLE);
         }
         count
     }
 
     fn handle_request(&mut self, token: Token) -> Result<Option<Frame>, RedisErr> {
-        let req_data = self.read_request(&token)?;
-        trace!(
-            "Read request from token {:?}, : {:?}",
-            token,
-            bytes_to_printable_string(&req_data)
-        );
-        let frame = self.decode_request(&token, req_data)?;
+        let req_data = self.sockets.get_mut(&token).unwrap().read_frame()?;
 
-        let command = self.decode_frame(frame)?;
+        let command = self.decode_frame(req_data)?;
 
-        let resp = self.apply_command(command);
+        let resp = self.apply_command(&token, command);
 
         trace!("Apply command from token {:?}: {:?}", token, resp);
-
-        // append response to the response buffer
 
         Ok(resp)
     }
 
-    fn decode_frame(
-        &mut self,
-        frame: Frame,
-    ) -> Result<Command, RedisErr> {
+    fn decode_frame(&mut self, frame: Frame) -> Result<Command, RedisErr> {
         match self.command_parser.parse(frame) {
             Ok(command) => Ok(command),
             Err(e) => {
@@ -199,54 +175,19 @@ impl Server {
         }
     }
 
-    fn decode_request(&mut self, token: &Token, data: Vec<u8>) -> Result<Frame, RedisErr> {
-        match Frame::from_bytes(&data) {
-            Ok(frame) => Ok(frame),
-            Err(ref e) if e.is_incomplete() => {
-                // incomplete frame, wait for next read
-                self.requests.insert(token.clone(), data);
-                Err(RedisErr::FrameIncomplete)
-            }
-            Err(e) => {
-                trace!("Failed to parse protocol: {}", e);
-                Err(RedisErr::FrameMalformed)
-            }
+    fn apply_command(&mut self, token: &Token, command: Command) -> Option<Frame> {
+        if let Command::Quit(_) = command {
+            self.drop_conncetion(token);
+            return None;
         }
-    }
-
-    fn apply_command(&mut self, command: Command) -> Option<Frame> {
         Some(command.apply(&mut self.db))
     }
 
-    fn read_request(&mut self, token: &Token) -> Result<Vec<u8>, RedisErr> {
-        match read_request(self.sockets.get_mut(&token).unwrap()) {
-            Ok(req_data) => match self.requests.remove(&token) {
-                Some(mut prev_bytes) => {
-                    prev_bytes.extend_from_slice(&req_data);
-                    Ok(prev_bytes)
-                }
-                None => Ok(req_data),
-            },
-            Err(ref e) if e.kind() == ErrorKind::ConnectionAborted => {
-                // connection closed
-                trace!("Connection closed: {:?}", token);
-                return Err(RedisErr::ConnectionAborted);
-            }
+    fn send_response(&mut self, token: Token, data: Frame) {
+        match self.sockets.get_mut(&token).unwrap().write_frame(data) {
+            Ok(_) => {}
             Err(e) => {
-                warn!("Failed to read request: {}", e);
-                return Err(RedisErr::IOError);
-            }
-        }
-    }
-
-    fn send_response(&mut self, token: Token, data: Vec<u8>) -> Vec<u8> {
-        match write_response(self.sockets.get_mut(&token).unwrap(), &data) {
-            Ok(len) if len == data.len() => Vec::new(),
-            Ok(len) => data[len..].to_vec(),
-
-            Err(e) => {
-                warn!("Failed to send response: {}", e);
-                data
+                self.handle_error(token, e);
             }
         }
     }
@@ -260,7 +201,7 @@ impl Server {
                     .registry()
                     .register(&mut stream, token, Interest::READABLE)
                     .unwrap();
-                self.sockets.insert(token, stream);
+                self.sockets.insert(token, Connection::new(stream));
                 self.token_count.0 += 1;
             }
             Err(e) => {
@@ -276,11 +217,8 @@ impl Server {
             .unwrap();
     }
 
-    fn set_resp(&mut self, token: Token, resp: Vec<u8>) {
-        self.response
-            .entry(token)
-            .or_insert_with(Vec::new)
-            .extend(resp);
+    fn set_resp(&mut self, token: Token, resp: Frame) {
+        self.response.insert(token, resp);
     }
 
     fn drop_conncetion(&mut self, token: &Token) {
@@ -299,14 +237,7 @@ impl Server {
     }
 
     fn idle(&mut self) {
-        // check if there is any request not completed and break when timeout
         let start_time = SystemTime::now();
-        for (_token, _req_bytes) in self.requests.iter() {
-            if start_time.elapsed().unwrap() > Duration::from_millis(100) {
-                return;
-            }
-            // TODO: check if the request is completed
-        }
 
         // check expired key
         for (key, expire_at) in self.db.expire_table.clone() {

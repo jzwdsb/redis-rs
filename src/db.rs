@@ -1,6 +1,6 @@
 use log::trace;
 
-use crate::data::Value;
+use crate::value::Value;
 use crate::RedisErr;
 
 use std::{
@@ -260,7 +260,7 @@ impl Database {
                 Ok(value_len)
             }
             None => {
-                let mut value = crate::data::ZSet::new();
+                let mut value = crate::value::ZSet::new();
                 let value_len = zset.len();
                 for (score, member) in zset {
                     value.zadd(nx, xx, lt, gt, ch, incr, score, member);

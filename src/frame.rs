@@ -2,45 +2,11 @@
 //! RESP is defined as a protocol in the Redis documentation:
 //! https://redis.io/docs/reference/protocol-spec/
 
+use crate::RedisErr;
+
 use std::fmt::Display;
 
 type Bytes = Vec<u8>;
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum FrameParseError {
-    Incomplete,
-    Malformed,
-}
-
-impl Display for FrameParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FrameParseError::Incomplete => write!(f, "Incomplete"),
-            FrameParseError::Malformed => write!(f, "Malformed"),
-        }
-    }
-}
-
-impl From<std::string::FromUtf8Error> for FrameParseError {
-    fn from(_: std::string::FromUtf8Error) -> Self {
-        FrameParseError::Malformed
-    }
-}
-
-impl From<std::num::ParseIntError> for FrameParseError {
-    fn from(_: std::num::ParseIntError) -> Self {
-        FrameParseError::Malformed
-    }
-}
-
-impl FrameParseError {
-    pub fn is_incomplete(&self) -> bool {
-        match self {
-            FrameParseError::Incomplete => true,
-            _ => false,
-        }
-    }
-}
 
 // RESP protocol definition
 #[derive(Debug, Clone, PartialEq)]
@@ -78,9 +44,9 @@ impl Display for Frame {
 }
 
 impl Frame {
-    pub fn from_bytes(data: &[u8]) -> Result<Frame, FrameParseError> {
+    pub fn from_bytes(data: &[u8]) -> Result<Frame, RedisErr> {
         if data.len() == 0 {
-            return Err(FrameParseError::Incomplete);
+            return Err(RedisErr::FrameIncomplete);
         }
 
         let frist_byte = data[0];
@@ -89,7 +55,7 @@ impl Frame {
             b'+' => {
                 let mut data = &data[1..];
                 if !data.ends_with(CRLF) {
-                    return Err(FrameParseError::Incomplete);
+                    return Err(RedisErr::FrameIncomplete);
                 }
                 // remove \r\n
                 data = &data[..data.len() - 2];
@@ -100,7 +66,7 @@ impl Frame {
             b'-' => {
                 let mut data = &data[1..];
                 if !data.ends_with(CRLF) {
-                    return Err(FrameParseError::Incomplete);
+                    return Err(RedisErr::FrameIncomplete);
                 }
                 // remove \r\n
                 data = &data[..data.len() - 2];
@@ -111,7 +77,7 @@ impl Frame {
             b':' => {
                 let mut data = &data[1..];
                 if !data.ends_with(CRLF) {
-                    return Err(FrameParseError::Incomplete);
+                    return Err(RedisErr::FrameIncomplete);
                 }
                 // remove \r\n
                 data = &data[..data.len() - 2];
@@ -125,7 +91,7 @@ impl Frame {
                 // find \r\n
                 let index = index_of(data, CRLF);
                 if index.is_none() {
-                    return Err(FrameParseError::Incomplete);
+                    return Err(RedisErr::FrameIncomplete);
                 }
                 let index = index.unwrap();
                 let num = String::from_utf8(data[..index].to_vec())?.parse()?;
@@ -134,11 +100,11 @@ impl Frame {
                 // find next \r\n
                 let index = index_of(data, CRLF);
                 if index.is_none() {
-                    return Err(FrameParseError::Incomplete);
+                    return Err(RedisErr::FrameIncomplete);
                 }
                 let index = index.unwrap();
                 if index != num {
-                    return Err(FrameParseError::Malformed);
+                    return Err(RedisErr::FrameMalformed);
                 }
 
                 // remove \r\n
@@ -151,7 +117,7 @@ impl Frame {
                 // find first \r\n and parse the number
                 let index = index_of(data, CRLF);
                 if index.is_none() {
-                    return Err(FrameParseError::Incomplete);
+                    return Err(RedisErr::FrameIncomplete);
                 }
                 let index = index.unwrap();
 
@@ -191,19 +157,19 @@ impl Frame {
                             result.push(Frame::SimpleString(item.to_string()));
                         }
                         _ => {
-                            return Err(FrameParseError::Malformed);
+                            return Err(RedisErr::FrameMalformed);
                         }
                     }
                 }
 
                 return Ok(Frame::Array(result));
             }
-            _ => Err(FrameParseError::Malformed),
+            _ => Err(RedisErr::FrameMalformed),
         }
     }
 
     // return the length after serialize
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match self {
             Frame::Nil => 5,
             // string len + '+' + '\r' + '\n'
@@ -353,6 +319,6 @@ mod tests {
         let data = "$7\r\nSET a ba\r\n".as_bytes();
         let command = Frame::from_bytes(&data.to_vec());
         assert_eq!(command.is_ok(), false);
-        assert_eq!(command.unwrap_err(), FrameParseError::Malformed);
+        assert_eq!(command.unwrap_err(), RedisErr::FrameMalformed);
     }
 }
