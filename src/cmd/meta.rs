@@ -3,11 +3,11 @@ use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
 
-use marco::{Applyer, CommandParser};
+use marco::Applyer;
 
 use std::time::{Duration, SystemTime};
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct Type {
     key: String,
 }
@@ -35,7 +35,7 @@ impl Type {
     }
 }
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct Del {
     key: String,
 }
@@ -66,7 +66,7 @@ impl Del {
     }
 }
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct Expire {
     key: String,
     expire: Duration,

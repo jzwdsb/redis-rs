@@ -3,9 +3,9 @@ use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
 
-use marco::{Applyer, CommandParser};
+use marco::Applyer;
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct HSet {
     key: String,
     field_values: Vec<(String, Vec<u8>)>,
@@ -46,7 +46,7 @@ impl HSet {
     }
 }
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct HGet {
     key: String,
     field: String,

@@ -3,9 +3,9 @@ use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
 
-use marco::{Applyer, CommandParser};
+use marco::Applyer;
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct ZAdd {
     key: String,
     nx: bool,
@@ -122,7 +122,7 @@ impl ZAdd {
     }
 }
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct ZCard {
     key: String,
 }
@@ -156,7 +156,7 @@ impl ZCard {
     }
 }
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct ZRem {
     key: String,
     members: Vec<Vec<u8>>,

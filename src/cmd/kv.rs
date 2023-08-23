@@ -3,11 +3,11 @@ use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
 
-use marco::{Applyer, CommandParser};
+use marco::Applyer;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct Get {
     key: String,
 }
@@ -44,7 +44,7 @@ impl Get {
     }
 }
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct MGet {
     key: Vec<String>,
 }
@@ -86,7 +86,7 @@ impl MGet {
     }
 }
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct Set {
     key: String,
     value: Vec<u8>,
@@ -209,7 +209,7 @@ impl Set {
     }
 }
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct MSet {
     pairs: Vec<(String, Vec<u8>)>,
 }

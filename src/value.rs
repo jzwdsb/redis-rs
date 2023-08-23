@@ -7,6 +7,8 @@ use std::{
     fmt::{Display, Formatter},
 };
 
+use bloomfilter::Bloom;
+
 type Bytes = Vec<u8>;
 
 #[derive(Clone, Debug)]
@@ -138,6 +140,31 @@ impl ZSet {
     }
 }
 
+#[derive(Debug,PartialEq,Eq,PartialOrd,Ord)]
+#[allow(dead_code)]
+pub enum ValueType {
+    String,
+    List,
+    Set,
+    Hash,
+    ZSet,
+    BloomFilter,
+}
+
+impl ValueType {
+    #[allow(dead_code)]
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            ValueType::String => "string",
+            ValueType::List => "list",
+            ValueType::Set => "set",
+            ValueType::Hash => "hash",
+            ValueType::ZSet => "zset",
+            ValueType::BloomFilter => "bloomfilter",
+        }
+    }
+}
+
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum Value {
@@ -146,58 +173,46 @@ pub enum Value {
     Set(HashSet<Bytes>),
     Hash(HashMap<String, Bytes>),
     ZSet(ZSet),
+
+    BloomFilter(Bloom<str>)
 }
 
 impl Value {
     #[allow(dead_code)]
-    pub fn get_type(&self) -> &'static str {
+    pub fn get_type(&self) -> ValueType {
         match self {
-            Value::KV(_) => "string",
-            Value::List(_) => "list",
-            Value::Set(_) => "set",
-            Value::Hash(_) => "hash",
-            Value::ZSet(_) => "zset",
+            Value::KV(_) => ValueType::String,
+            Value::List(_) => ValueType::List,
+            Value::Set(_) => ValueType::Set,
+            Value::Hash(_) => ValueType::Hash,
+            Value::ZSet(_) => ValueType::ZSet,
+            Value::BloomFilter(_) => ValueType::BloomFilter,
         }
     }
 
     #[allow(dead_code)]
     pub fn is_kv(&self) -> bool {
-        match self {
-            Value::KV(_) => true,
-            _ => false,
-        }
+        self.get_type() == ValueType::String
     }
 
     #[allow(dead_code)]
     pub fn is_list(&self) -> bool {
-        match self {
-            Value::List(_) => true,
-            _ => false,
-        }
+        self.get_type() == ValueType::List
     }
 
     #[allow(dead_code)]
     pub fn is_set(&self) -> bool {
-        match self {
-            Value::Set(_) => true,
-            _ => false,
-        }
+        self.get_type() == ValueType::Set
     }
 
     #[allow(dead_code)]
     pub fn is_hash(&self) -> bool {
-        match self {
-            Value::Hash(_) => true,
-            _ => false,
-        }
+        self.get_type() == ValueType::Hash
     }
 
     #[allow(dead_code)]
     pub fn is_zset(&self) -> bool {
-        match self {
-            Value::ZSet(_) => true,
-            _ => false,
-        }
+        self.get_type() == ValueType::ZSet
     }
 
     #[allow(dead_code)]
@@ -363,6 +378,11 @@ impl Display for Value {
                     }
                     write!(f, "{}:{}", String::from_utf8_lossy(k.clone().as_slice()), v)?;
                 }
+                write!(f, "}}")
+            },
+            Value::BloomFilter(_v) => {
+                // TODO: implement this
+                write!(f, "{{")?;
                 write!(f, "}}")
             }
         }

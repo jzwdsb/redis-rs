@@ -3,8 +3,9 @@ use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
 
-use marco::{Applyer, CommandParser};
-#[derive(Debug, Applyer, CommandParser)]
+use marco::Applyer;
+
+#[derive(Debug, Applyer)]
 pub struct LPush {
     key: String,
     values: Vec<Vec<u8>>,
@@ -51,7 +52,7 @@ impl LPush {
     }
 }
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct LRange {
     key: String,
     start: i64,

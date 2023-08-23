@@ -312,7 +312,7 @@ impl Database {
     pub fn get_type(&self, key: &str) -> Option<&'static str> {
         let entry = self.table.get(key);
         match entry {
-            Some(entry) => Some(entry.value.get_type()),
+            Some(entry) => Some(entry.value.get_type().to_str()),
             None => None,
         }
     }

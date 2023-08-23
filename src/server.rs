@@ -2,7 +2,7 @@
 //! use mio to achieve non-blocking IO, multiplexing and event driven
 //! an event loop is used to handle all the IO events
 
-use crate::cmd::Command;
+use crate::cmd::{Command,Parser};
 use crate::connection::Connection;
 use crate::db::Database;
 use crate::frame::Frame;
@@ -41,7 +41,7 @@ pub struct Server {
     sockets: HashMap<Token, Connection>,
     token_count: Token,
     wait_duration: Duration,
-    command_parser: crate::cmd::Parser,
+    command_parser: Parser,
     response: HashMap<Token, Frame>,
 }
 
@@ -56,8 +56,7 @@ impl Server {
                 &mut listener,
                 Token(0), // server is token 0
                 Interest::READABLE,
-            )
-            .unwrap();
+            )?;
         Ok(Self {
             db: db,
             shutdown: false,

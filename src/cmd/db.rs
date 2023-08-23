@@ -3,9 +3,9 @@ use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
 
-use marco::{Applyer, CommandParser};
+use marco::Applyer;
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct Ping {
     message: Option<Vec<u8>>,
 }
@@ -38,7 +38,7 @@ impl Ping {
     }
 }
 
-#[derive(Debug, Applyer, CommandParser)]
+#[derive(Debug, Applyer)]
 pub struct Flush {}
 
 impl Flush {

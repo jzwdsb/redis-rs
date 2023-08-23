@@ -41,10 +41,6 @@ pub struct Parser {
     trie: Trie<CommandParseFn>,
 }
 
-trait CommandParser {
-    fn parse(frames: Vec<Frame>) -> Result<Box<dyn CommandApplyer>, RedisErr>;
-}
-
 pub trait CommandApplyer {
     fn apply(self: Box<Self>, db: &mut Database) -> Frame;
 }
@@ -59,49 +55,43 @@ macro_rules! add_tire {
     };
 }
 
-impl Parser {
-    pub fn new() -> Self {
-        let mut trie: Trie<CommandParseFn> = Trie::new();
-        add_tire!(
-            trie, Get, MGet, Set, MSet, LPush, LRange, HSet, HGet, ZAdd, ZCard, ZRem, Del, Expire,
-            Type, Quit, Ping, Flush
-        );
-        Self { trie }
-    }
-
-    pub fn parse(&self, frame: Frame) -> Result<Command, RedisErr> {
-        trace!("parse: {:?}", frame);
-        if let Frame::Array(frames) = frame {
-            self.trie
-                .get(&frame_to_string(&frames[0])?.to_uppercase())
-                .ok_or(RedisErr::UnknownCommand)?(frames)
-        } else {
-            Err(RedisErr::InvalidProtocol)
-        }
-    }
-}
-
-#[allow(unused_macros)]
-macro_rules! def_command_enum {
+macro_rules! def_command_impl_parse {
     ($($cmd:ident),*) => {
-
         #[derive(Debug)]
         pub enum Command {
                 $($cmd($cmd),)*
             }
 
-            impl Command {
-                pub fn apply(self, db: &mut crate::db::Database) -> Frame {
-                    trace!("apply command: {:?}", self);
+        impl Command {
+            pub fn apply(self, db: &mut crate::db::Database) -> Frame {
+                trace!("apply command: {:?}", self);
                 match self {
                     $(Command::$cmd(cmd) => cmd.apply(db),)*
+                }
+            }
+        }
+        impl Parser {
+            pub fn new() -> Self {
+                let mut trie: Trie<CommandParseFn> = Trie::new();
+                add_tire!(trie, $($cmd),*);
+                Self { trie }
+            }
+
+            pub fn parse(&self, frame: Frame) -> Result<Command, RedisErr> {
+                trace!("parse: {:?}", frame);
+                if let Frame::Array(frames) = frame {
+                    self.trie
+                        .get(&frame_to_string(&frames[0])?.to_uppercase())
+                        .ok_or(RedisErr::UnknownCommand)?(frames)
+                } else {
+                    Err(RedisErr::InvalidProtocol)
                 }
             }
         }
     }
 }
 
-def_command_enum! {
+def_command_impl_parse! {
     Get, MGet, Set, MSet,
     LPush, LRange,
     HSet, HGet,
@@ -111,6 +101,7 @@ def_command_enum! {
     Ping, Flush
 }
 
+#[inline]
 fn frame_to_string(frame: &Frame) -> Result<String, RedisErr> {
     match frame {
         Frame::SimpleString(s) => Ok(s.clone()),
