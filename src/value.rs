@@ -7,6 +7,8 @@ use std::{
     fmt::{Display, Formatter},
 };
 
+use marco::ValueDecorator;
+
 use bloomfilter::Bloom;
 
 type Bytes = Vec<u8>;
@@ -143,7 +145,7 @@ impl ZSet {
 #[derive(Debug,PartialEq,Eq,PartialOrd,Ord)]
 #[allow(dead_code)]
 pub enum ValueType {
-    String,
+    KV,
     List,
     Set,
     Hash,
@@ -155,7 +157,7 @@ impl ValueType {
     #[allow(dead_code)]
     pub fn to_str(&self) -> &'static str {
         match self {
-            ValueType::String => "string",
+            ValueType::KV => "string",
             ValueType::List => "list",
             ValueType::Set => "set",
             ValueType::Hash => "hash",
@@ -165,7 +167,7 @@ impl ValueType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,ValueDecorator)]
 #[allow(dead_code)]
 pub enum Value {
     KV(Bytes),
@@ -175,165 +177,6 @@ pub enum Value {
     ZSet(ZSet),
 
     BloomFilter(Bloom<str>)
-}
-
-impl Value {
-    #[allow(dead_code)]
-    pub fn get_type(&self) -> ValueType {
-        match self {
-            Value::KV(_) => ValueType::String,
-            Value::List(_) => ValueType::List,
-            Value::Set(_) => ValueType::Set,
-            Value::Hash(_) => ValueType::Hash,
-            Value::ZSet(_) => ValueType::ZSet,
-            Value::BloomFilter(_) => ValueType::BloomFilter,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn is_kv(&self) -> bool {
-        self.get_type() == ValueType::String
-    }
-
-    #[allow(dead_code)]
-    pub fn is_list(&self) -> bool {
-        self.get_type() == ValueType::List
-    }
-
-    #[allow(dead_code)]
-    pub fn is_set(&self) -> bool {
-        self.get_type() == ValueType::Set
-    }
-
-    #[allow(dead_code)]
-    pub fn is_hash(&self) -> bool {
-        self.get_type() == ValueType::Hash
-    }
-
-    #[allow(dead_code)]
-    pub fn is_zset(&self) -> bool {
-        self.get_type() == ValueType::ZSet
-    }
-
-    #[allow(dead_code)]
-    pub fn as_kv(self) -> Option<Bytes> {
-        match self {
-            Value::KV(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_kv_ref(&self) -> Option<&Bytes> {
-        match self {
-            Value::KV(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_kv_mut(&mut self) -> Option<&mut Bytes> {
-        match self {
-            Value::KV(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_list(self) -> Option<VecDeque<Bytes>> {
-        match self {
-            Value::List(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_list_ref(&self) -> Option<&VecDeque<Bytes>> {
-        match self {
-            Value::List(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_list_mut(&mut self) -> Option<&mut VecDeque<Bytes>> {
-        match self {
-            Value::List(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_set(self) -> Option<HashSet<Bytes>> {
-        match self {
-            Value::Set(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_set_ref(&self) -> Option<&HashSet<Bytes>> {
-        match self {
-            Value::Set(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_set_mut(&mut self) -> Option<&mut HashSet<Bytes>> {
-        match self {
-            Value::Set(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_hash(self) -> Option<HashMap<String, Bytes>> {
-        match self {
-            Value::Hash(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_hash_ref(&self) -> Option<&HashMap<String, Bytes>> {
-        match self {
-            Value::Hash(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_hash_mut(&mut self) -> Option<&mut HashMap<String, Bytes>> {
-        match self {
-            Value::Hash(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_zset(self) -> Option<ZSet> {
-        match self {
-            Value::ZSet(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_zset_ref(&self) -> Option<&ZSet> {
-        match self {
-            Value::ZSet(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_zset_mut(&mut self) -> Option<&mut ZSet> {
-        match self {
-            Value::ZSet(v) => Some(v),
-            _ => None,
-        }
-    }
 }
 
 impl Display for Value {

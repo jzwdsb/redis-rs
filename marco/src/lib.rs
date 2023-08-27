@@ -1,5 +1,7 @@
 use proc_macro::{Literal, TokenStream, TokenTree};
+use syn::Variant;
 extern crate syn;
+
 #[macro_use]
 extern crate quote;
 
@@ -49,7 +51,6 @@ pub fn to_lower_case_str(streal: TokenStream) -> TokenStream {
 
 #[proc_macro_derive(CommandParser)]
 pub fn add_command_parser(input: TokenStream) -> TokenStream {
-
     // Parse the string representation
     let ast = syn::parse(input).unwrap();
 
@@ -74,7 +75,6 @@ fn impl_command_parse(ast: &syn::DeriveInput) -> TokenStream {
 
 #[proc_macro_derive(Applyer)]
 pub fn add_command_applyer(input: TokenStream) -> TokenStream {
-
     // Parse the string representation
     let ast = syn::parse(input).unwrap();
 
@@ -95,4 +95,112 @@ fn impl_command_apply(ast: &syn::DeriveInput) -> TokenStream {
         }
     };
     gen.into()
+}
+
+#[proc_macro_derive(ValueDecorator)]
+pub fn add_value_decorator(input: TokenStream) -> TokenStream {
+    let ast = syn::parse(input).unwrap();
+    let gen = impl_value_decorator(&ast);
+
+    gen
+}
+
+fn impl_value_decorator(ast: &syn::DeriveInput) -> TokenStream {
+    let name = &ast.ident;
+    let variants: &syn::punctuated::Punctuated<Variant, syn::token::Comma> = match &ast.data {
+        syn::Data::Enum(e) => &e.variants,
+        _ => panic!("only enum can be decorated"),
+    };
+    // for each variant, generate a impl for ValueDecorator
+    // impl is_#name, to_#name, as_#name_ref, as_#name_mut
+    let mut gen = quote! {};
+    for variant in variants {
+        let gen_variant = impl_variant(name, variant);
+        gen = quote! {
+            #gen
+            #gen_variant
+        };
+    }
+    let get_type_tokens = impl_value_get_type(name, variants.clone());
+    gen = quote! {
+        #gen
+        #get_type_tokens
+    };
+    gen.into()
+}
+
+fn impl_value_get_type(
+    name: &syn::Ident,
+    variants: syn::punctuated::Punctuated<Variant, syn::token::Comma>,
+) -> proc_macro2::TokenStream {
+    let mut gen = quote! {};
+    for variant in variants {
+        let variant_name = &variant.ident;
+        gen = quote! {
+            #gen
+            #name::#variant_name(_) => ValueType::#variant_name,
+        };
+    }
+    quote! {
+        impl #name {
+            pub fn get_type(&self) -> ValueType {
+                match self {
+                    #gen
+                }
+            }
+        }
+    }
+}
+
+fn impl_variant(name: &syn::Ident, variant: &Variant) -> proc_macro2::TokenStream {
+    let variant_name = &variant.ident;
+    let lower_name = format!("{}", variant_name).to_lowercase();
+    let is_name = syn::Ident::new(&format!("is_{}", lower_name), variant_name.span());
+    let to_name = syn::Ident::new(&format!("to_{}", lower_name), variant_name.span());
+    let as_name_ref = syn::Ident::new(&format!("as_{}_ref", lower_name), variant_name.span());
+    let as_name_mut = syn::Ident::new(&format!("as_{}_mut", lower_name), variant_name.span());
+    let inside = match &variant.fields {
+        syn::Fields::Unnamed(fields) => {
+            let inside = &fields.unnamed.first().unwrap().ty;
+            quote! { #inside }
+        }
+        _ => panic!("only tuple struct is supported"),
+    };
+    let gen_variant = quote! {
+        impl #name {
+            #[allow(dead_code)]
+            pub fn #is_name(&self) -> bool {
+                match self {
+                    #name::#variant_name(_) => true,
+                    _ => false,
+                }
+            }
+
+            #[allow(dead_code)]
+            pub fn #to_name(self) -> Option<#inside> {
+                match self {
+                    #name::#variant_name(v) => Some(v),
+                    _ => None,
+                }
+            }
+
+            #[allow(dead_code)]
+            pub fn #as_name_ref(&self) -> Option<&#inside> {
+                match self {
+                    #name::#variant_name(v) => Some(v),
+                    _ => None,
+                }
+            }
+
+            #[allow(dead_code)]
+            pub fn #as_name_mut(&mut self) -> Option<&mut #inside> {
+                match self {
+                    #name::#variant_name(v) => Some(v),
+                    _ => None,
+                }
+            }
+        }
+    };
+
+    gen_variant
 }

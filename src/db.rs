@@ -92,7 +92,7 @@ impl Database {
 
         let old = self.table.insert(key, entry);
         if get && old.is_some() {
-            return Ok(Some(old.unwrap().value.as_kv().unwrap()));
+            return Ok(Some(old.unwrap().value.to_kv().unwrap()));
         }
         Ok(None)
     }
