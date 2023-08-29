@@ -176,7 +176,7 @@ pub enum Value {
     Hash(HashMap<String, Bytes>),
     ZSet(ZSet),
 
-    BloomFilter(Bloom<str>)
+    BloomFilter(Bloom<String>)
 }
 
 impl Display for Value {

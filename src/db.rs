@@ -309,6 +309,22 @@ impl Database {
         }
     }
 
+    pub fn get_mut_value(&mut self, key: &str) -> Option<&mut Value> {
+        let entry = self.table.get_mut(key);
+        match entry {
+            Some(entry) => Some(&mut entry.value),
+            None => None,
+        }
+    }
+
+    pub fn set_value(&mut self, key: &str, value: Value, expire_at: Option<SystemTime>) {
+        let entry = Entry {
+            value,
+            expire_at,
+        };
+        self.table.insert(key.to_string(), entry);
+    }
+
     pub fn get_type(&self, key: &str) -> Option<&'static str> {
         let entry = self.table.get(key);
         match entry {

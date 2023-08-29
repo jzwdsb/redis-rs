@@ -17,6 +17,9 @@ pub use hash::*;
 mod sort_set;
 pub use sort_set::*;
 
+mod bf;
+pub use bf::*;
+
 mod meta;
 pub use meta::*;
 
@@ -96,6 +99,7 @@ def_command_impl_parse! {
     LPush, LRange,
     HSet, HGet,
     ZAdd, ZCard, ZRem,
+    BFAdd,
     Del, Expire, Type,
     Quit,
     Ping, Flush
