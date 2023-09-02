@@ -309,7 +309,15 @@ impl Database {
         }
     }
 
-    pub fn get_mut_value(&mut self, key: &str) -> Option<&mut Value> {
+    pub fn get_value_ref(&self, key: &str) -> Option<&Value> {
+        let entry = self.table.get(key);
+        match entry {
+            Some(entry) => Some(&entry.value),
+            None => None,
+        }
+    }
+
+    pub fn get_value_mut(&mut self, key: &str) -> Option<&mut Value> {
         let entry = self.table.get_mut(key);
         match entry {
             Some(entry) => Some(&mut entry.value),
@@ -318,10 +326,7 @@ impl Database {
     }
 
     pub fn set_value(&mut self, key: &str, value: Value, expire_at: Option<SystemTime>) {
-        let entry = Entry {
-            value,
-            expire_at,
-        };
+        let entry = Entry { value, expire_at };
         self.table.insert(key.to_string(), entry);
     }
 

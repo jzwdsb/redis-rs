@@ -99,7 +99,7 @@ def_command_impl_parse! {
     LPush, LRange,
     HSet, HGet,
     ZAdd, ZCard, ZRem,
-    BFAdd,
+    BFAdd, BFExists,
     Del, Expire, Type,
     Quit,
     Ping, Flush
