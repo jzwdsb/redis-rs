@@ -107,6 +107,59 @@ impl Expire {
     }
 }
 
+#[derive(Debug)]
+enum ObjectOption {
+    Encoding,
+    Idletime,
+    Refcount,
+    Frequency,
+}
+
+#[derive(Debug, Applyer)]
+pub struct Object {
+    key: String,
+    option: ObjectOption,
+}
+
+impl Object {
+    fn new(key: String, opt: ObjectOption) -> Self {
+        Self { key, option: opt }
+    }
+
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+        if frames.len() != 3 {
+            return Err(RedisErr::WrongNumberOfArguments);
+        }
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"OBJECT")?;
+        let option = match next_string(&mut iter)?.to_uppercase().as_str() {
+            "ENCODING" => ObjectOption::Encoding,
+            "IDLETIME" => ObjectOption::Idletime,
+            "REFCOUNT" => ObjectOption::Refcount,
+            "FREQUENCY" => ObjectOption::Frequency,
+            _ => return Err(RedisErr::UnknownCommand),
+        };
+        let key = next_string(&mut iter)?; // key
+        Ok(Self::new(key, option))
+    }
+
+    pub fn apply(self, db: &mut Database) -> Frame {
+        match self.option {
+            ObjectOption::Encoding => Frame::SimpleString("raw".to_string()),
+            ObjectOption::Idletime => match db.get_entry_ref(&self.key) {
+                Some(t) => Frame::Integer(t.get_touched_at().elapsed().unwrap().as_secs() as i64),
+                None => Frame::Integer(-1),
+            },
+            ObjectOption::Refcount => {
+                unimplemented!("ObjectOption::Refcount")
+            }
+            ObjectOption::Frequency => {
+                unimplemented!("ObjectOption::Frequency")
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

@@ -100,7 +100,7 @@ def_command_impl_parse! {
     HSet, HGet,
     ZAdd, ZCard, ZRem,
     BFAdd, BFExists,
-    Del, Expire, Type,
+    Del, Expire, Type, Object,
     Quit,
     Ping, Flush
 }

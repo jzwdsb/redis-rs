@@ -14,6 +14,38 @@ type Bytes = Vec<u8>;
 pub struct Entry {
     value: Value,
     expire_at: Option<SystemTime>,
+    touch_at: SystemTime,
+}
+
+impl Entry {
+    #[allow(dead_code)]
+    pub fn new(value: Value, expire_at: Option<SystemTime>) -> Self {
+        Self {
+            value,
+            expire_at,
+            touch_at: SystemTime::now(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn get_value(&self) -> &Value {
+        &self.value
+    }
+
+    #[allow(dead_code)]
+    pub fn get_touched_at(&self) -> SystemTime {
+        self.touch_at
+    }
+
+    #[allow(dead_code)]
+    pub fn set_touch_at(&mut self, touch_at: SystemTime) {
+        self.touch_at = touch_at;
+    }
+
+    #[allow(dead_code)]
+    pub fn get_expire_at(&self) -> Option<SystemTime> {
+        self.expire_at
+    }
 }
 
 #[derive(Debug)]
@@ -32,14 +64,13 @@ impl Database {
 
     pub fn get(&mut self, key: &str) -> Result<Bytes, RedisErr> {
         trace!("Get key: {}", key);
-        let entry = self.table.get(key);
+        let entry = self.get_entry_ref(key);
         match entry {
             Some(entry) => {
                 // check expire on read
                 if let Some(expire_at) = entry.expire_at {
                     if expire_at < SystemTime::now() {
-                        self.table.remove(key);
-                        self.expire_table.remove(key);
+                        self.remove(key);
                         return Err(RedisErr::KeyNotFound);
                     }
                 }
@@ -75,8 +106,9 @@ impl Database {
         let mut entry = Entry {
             value: Value::KV(value),
             expire_at: expire_at,
+            touch_at: SystemTime::now(),
         };
-        let old = self.table.get(&key);
+        let old = self.get_entry_ref(&key);
         if nx && old.is_some() {
             return Err(RedisErr::NoAction);
         }
@@ -98,7 +130,7 @@ impl Database {
     }
 
     pub fn expire(&mut self, key: &str, expire_at: SystemTime) -> Result<(), RedisErr> {
-        let entry = self.table.get_mut(key);
+        let entry = self.get_entry_mut(key);
         match entry {
             Some(entry) => {
                 entry.expire_at = Some(expire_at);
@@ -110,13 +142,11 @@ impl Database {
     }
 
     pub fn del(&mut self, key: &str) -> Option<Value> {
-        trace!("Del key: {}", key);
-        self.expire_table.remove(key);
-        self.table.remove(key).map(|entry| entry.value)
+        self.remove(key)
     }
 
     pub fn lpush(&mut self, key: &str, values: Vec<Bytes>) -> Result<usize, RedisErr> {
-        let entry = self.table.get_mut(key);
+        let entry = self.get_entry_mut(key);
         let value_len = values.len();
         match entry {
             Some(entry) => {
@@ -138,15 +168,16 @@ impl Database {
                 let entry = Entry {
                     value: Value::List(list),
                     expire_at: None,
+                    touch_at: SystemTime::now(),
                 };
-                self.table.insert(key.to_string(), entry);
+                self.set_entry(&key, entry);
                 Ok(value_len)
             }
         }
     }
 
-    pub fn lrange(&self, key: &str, start: i64, stop: i64) -> Result<Vec<Bytes>, RedisErr> {
-        let entry = self.table.get(key);
+    pub fn lrange(&mut self, key: &str, start: i64, stop: i64) -> Result<Vec<Bytes>, RedisErr> {
+        let entry = self.get_entry_ref(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_list() {
@@ -191,7 +222,7 @@ impl Database {
         key: String,
         field_values: Vec<(String, Bytes)>,
     ) -> Result<usize, RedisErr> {
-        let entry = self.table.get_mut(&key);
+        let entry = self.get_entry_mut(&key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_hash() {
@@ -214,15 +245,16 @@ impl Database {
                 let entry = Entry {
                     value: Value::Hash(map),
                     expire_at: None,
+                    touch_at: SystemTime::now(),
                 };
-                self.table.insert(key, entry);
+                self.set_entry(&key, entry);
                 Ok(res)
             }
         }
     }
 
-    pub fn hget(&self, key: &str, field: &str) -> Result<Option<Bytes>, RedisErr> {
-        let entry = self.table.get(key);
+    pub fn hget(&mut self, key: &str, field: &str) -> Result<Option<Bytes>, RedisErr> {
+        let entry = self.get_entry_ref(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_hash() {
@@ -246,7 +278,7 @@ impl Database {
         incr: bool,
         zset: Vec<(f64, Bytes)>,
     ) -> Result<usize, RedisErr> {
-        let entry = self.table.get_mut(key);
+        let entry = self.get_entry_mut(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_zset() {
@@ -268,6 +300,7 @@ impl Database {
                 let entry = Entry {
                     value: Value::ZSet(value),
                     expire_at: None,
+                    touch_at: SystemTime::now(),
                 };
                 self.table.insert(key.to_string(), entry);
                 Ok(value_len)
@@ -275,14 +308,13 @@ impl Database {
         }
     }
 
-    pub fn zcard(&self, key: &str) -> Result<usize, RedisErr> {
-        let entry = self.table.get(key);
+    pub fn zcard(&mut self, key: &str) -> Result<usize, RedisErr> {
+        let entry = self.get_entry_ref(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_zset() {
                     return Err(RedisErr::WrongType);
                 }
-
                 Ok(entry.value.as_zset_ref().unwrap().len())
             }
             None => Err(RedisErr::KeyNotFound),
@@ -290,7 +322,7 @@ impl Database {
     }
 
     pub fn zrem(&mut self, key: &str, members: Vec<Bytes>) -> Result<usize, RedisErr> {
-        let entry = self.table.get_mut(key);
+        let entry = self.get_entry_mut(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_zset() {
@@ -309,25 +341,58 @@ impl Database {
         }
     }
 
-    pub fn get_value_ref(&self, key: &str) -> Option<&Value> {
-        let entry = self.table.get(key);
-        match entry {
+    #[allow(unused)]
+    pub fn get_value_ref(&mut self, key: &str) -> Option<&Value> {
+        match self.get_entry_ref(key) {
             Some(entry) => Some(&entry.value),
             None => None,
         }
     }
 
     pub fn get_value_mut(&mut self, key: &str) -> Option<&mut Value> {
-        let entry = self.table.get_mut(key);
-        match entry {
+        match self.get_entry_mut(key) {
             Some(entry) => Some(&mut entry.value),
             None => None,
         }
     }
 
-    pub fn set_value(&mut self, key: &str, value: Value, expire_at: Option<SystemTime>) {
-        let entry = Entry { value, expire_at };
+    pub fn get_entry_ref(&mut self, key: &str) -> Option<&Entry> {
+        match self.table.get_mut(key) {
+            Some(entry) => {
+                entry.touch_at = SystemTime::now();
+                Some(entry)
+            }
+            None => None,
+        }
+    }
+
+    pub fn get_entry_mut(&mut self, key: &str) -> Option<&mut Entry> {
+        let entry = self.table.get_mut(key);
+        match entry {
+            Some(entry) => {
+                entry.touch_at = SystemTime::now();
+                Some(entry)
+            }
+            None => None,
+        }
+    }
+
+    pub fn set_entry(&mut self, key: &str, entry: Entry) {
         self.table.insert(key.to_string(), entry);
+    }
+
+    pub fn set_value(&mut self, key: &str, value: Value, expire_at: Option<SystemTime>) {
+        let entry = Entry {
+            value,
+            expire_at,
+            touch_at: SystemTime::now(),
+        };
+        self.set_entry(&key, entry);
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        self.expire_table.remove(key);
+        self.table.remove(key).map(|entry| entry.value)
     }
 
     pub fn get_type(&self, key: &str) -> Option<&'static str> {

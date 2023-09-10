@@ -142,7 +142,7 @@ impl ZCard {
         Ok(Self::new(key))
     }
 
-    pub fn apply(self, db: &Database) -> Frame {
+    pub fn apply(self, db: &mut Database) -> Frame {
         match db.zcard(&self.key) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
