@@ -23,3 +23,6 @@ path = "./marco"
 
 [dependencies.trie]
 path = "./trie"
+
+# [dependencies.bloomfilter]
+# path = "./bloomfilter"
