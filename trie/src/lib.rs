@@ -23,7 +23,7 @@ impl<V> TrieNode<V> {
     }
 }
 
-pub struct Trie<V> where{
+pub struct Trie<V> {
     root: TrieNode<V>,
 }
 
