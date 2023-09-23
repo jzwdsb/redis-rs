@@ -5,7 +5,7 @@
 
 set -x
 
-OUTPUT_DIR=./target/coverage 
+OUTPUT_DIR=./target/coverage
 BIN_NAME=redis_rs
 LLVM_PROFILE_FILE="$BIN_NAME.profraw"
 
