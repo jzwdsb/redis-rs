@@ -23,6 +23,8 @@ pub use bf::*;
 mod meta;
 pub use meta::*;
 
+mod pub_sub;
+
 mod connections;
 pub use connections::*;
 

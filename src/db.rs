@@ -48,6 +48,11 @@ impl Entry {
     }
 }
 
+/*
+a second thought, Maybe it's not nescery to implment all the date manipulation method in the database layer.
+There are duplicate code in the command layer and the database could only provide the basic data operate method.
+*/
+
 #[derive(Debug)]
 pub struct Database {
     pub table: HashMap<String, Entry>,
