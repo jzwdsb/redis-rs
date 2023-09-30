@@ -1,24 +1,26 @@
 //! support pub/sub comamnd
+
 use super::*;
+use crate::connection::Connection;
 use crate::db::Database;
 use crate::frame::Frame;
-use crate::RedisErr;
+use crate::{connection, RedisErr};
 
-use marco::Applyer;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-
-#[derive(Debug, Applyer)]
-struct Publish {
+#[derive(Debug)]
+pub struct Publish {
     channel: String,
     message: String,
 }
 
 impl Publish {
-    fn new (channel: String, message: String) -> Self {
+    fn new(channel: String, message: String) -> Self {
         Self { channel, message }
     }
 
-    fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"PUBLISH")?;
         let channel = next_string(&mut iter)?; // channel
@@ -26,33 +28,62 @@ impl Publish {
         Ok(Self::new(channel, message))
     }
 
-    fn apply(self, db: &Database) -> Frame {
-        todo!("publish")
+    pub fn apply(self, db: &mut Database) -> Frame {
+        match db.publish(&self.channel, &self.message) {
+            Ok(count) => Frame::Integer(count as i64),
+            Err(_) => Frame::Integer(0),
+        }
     }
 }
 
-#[derive(Debug, Applyer)]
-struct Subscribe {
+#[derive(Debug)]
+pub struct Subscribe {
+    conn: Rc<RefCell<connection::Connection>>,
     channels: Vec<String>,
 }
 
 impl Subscribe {
-    fn new(channels: Vec<String>) -> Self {
-        Self { channels }
+    fn new(channels: Vec<String>, conn: Rc<RefCell<connection::Connection>>) -> Self {
+        Self { channels, conn }
     }
 
-    fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(
+        frames: Vec<Frame>,
+        conn: Rc<RefCell<Connection>>,
+    ) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"SUBSCRIBE")?;
         let mut channels = Vec::new();
-        while let Some(frame) = iter.next() {
+        while let Some(_) = iter.next() {
             let channel = next_string(&mut iter)?;
             channels.push(channel);
         }
-        Ok(Self::new(channels))
+        Ok(Self::new(channels, conn))
     }
 
-    fn apply(self, db: &Database) -> Frame {
-        todo!("subscribe")
+    pub fn apply(self, db: &mut Database) -> Frame {
+        let cnt = self.channels.len();
+        for channel in self.channels {
+            db.add_subscripter(&channel, self.conn.clone())
+        }
+        Frame::Array(vec![Frame::SimpleString("subscribe".to_string()); cnt])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_frames() {
+        let cmd = Publish::from_frames(vec![
+            Frame::BulkString(b"PUBLISH".to_vec()),
+            Frame::BulkString(b"channel".to_vec()),
+            Frame::BulkString(b"message".to_vec()),
+        ]);
+        assert_eq!(
+            cmd.unwrap().channel,
+            Publish::new("channel".to_string(), "message".to_string()).channel
+        );
     }
 }

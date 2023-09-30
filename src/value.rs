@@ -142,7 +142,7 @@ impl ZSet {
     }
 }
 
-#[derive(Debug,PartialEq,Eq,PartialOrd,Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(dead_code)]
 pub enum ValueType {
     KV,
@@ -167,7 +167,7 @@ impl ValueType {
     }
 }
 
-#[derive(Debug,ValueDecorator)]
+#[derive(Debug, ValueDecorator)]
 #[allow(dead_code)]
 pub enum Value {
     KV(Bytes),
@@ -176,7 +176,7 @@ pub enum Value {
     Hash(HashMap<String, Bytes>),
     ZSet(ZSet),
 
-    BloomFilter(Bloom<String>)
+    BloomFilter(Bloom<String>),
 }
 
 impl Display for Value {
@@ -222,7 +222,7 @@ impl Display for Value {
                     write!(f, "{}:{}", String::from_utf8_lossy(k.clone().as_slice()), v)?;
                 }
                 write!(f, "}}")
-            },
+            }
             Value::BloomFilter(_v) => {
                 // TODO: implement this
                 write!(f, "{{")?;

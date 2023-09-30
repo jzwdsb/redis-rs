@@ -6,6 +6,9 @@
 //! and how the command manipulates the database.
 
 mod kv;
+use std::cell::RefCell;
+use std::rc::Rc;
+
 pub use kv::*;
 
 mod list;
@@ -24,6 +27,7 @@ mod meta;
 pub use meta::*;
 
 mod pub_sub;
+use pub_sub::*;
 
 mod connections;
 pub use connections::*;
@@ -31,6 +35,7 @@ pub use connections::*;
 mod db;
 pub use db::*;
 
+use crate::connection::Connection;
 use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
@@ -40,7 +45,7 @@ use trie::Trie;
 
 use log::trace;
 
-type CommandParseFn = Box<dyn Fn(Vec<Frame>) -> Result<Command, RedisErr>>;
+type CommandParseFn = Box<dyn Fn(Vec<Frame>, Rc<RefCell<Connection>>) -> Result<Command, RedisErr>>;
 
 pub struct Parser {
     trie: Trie<CommandParseFn>,
@@ -53,10 +58,13 @@ pub trait CommandApplyer {
 macro_rules! add_tire {
     ($tire:ident, $($cmd:ident),*) => {
         $(
-            $tire.insert(to_upper_case_str!($cmd), Box::new(|frames: Vec<Frame>| -> Result<Command, RedisErr> {
+            $tire.insert(to_upper_case_str!($cmd), Box::new(|frames: Vec<Frame>, _: Rc<RefCell<Connection>>| -> Result<Command, RedisErr> {
                 Ok(Command::$cmd($cmd::from_frames(frames)?))
             }));
         )*
+        $tire.insert("SUBSCRIBE", Box::new(|frames: Vec<Frame>, conn: Rc<RefCell<Connection>>| -> Result<Command, RedisErr> {
+            Ok(Command::Subscribe(Subscribe::from_frames(frames, conn)?))
+        }));
     };
 }
 
@@ -65,6 +73,9 @@ macro_rules! def_command_impl_parse {
         #[derive(Debug)]
         pub enum Command {
                 $($cmd($cmd),)*
+
+                // don't have a unified type for publish and subscribe
+                Subscribe(pub_sub::Subscribe),
             }
 
         impl Command {
@@ -72,6 +83,7 @@ macro_rules! def_command_impl_parse {
                 trace!("apply command: {:?}", self);
                 match self {
                     $(Command::$cmd(cmd) => cmd.apply(db),)*
+                    Command::Subscribe(cmd) => cmd.apply(db),
                 }
             }
         }
@@ -82,12 +94,12 @@ macro_rules! def_command_impl_parse {
                 Self { trie }
             }
 
-            pub fn parse(&self, frame: Frame) -> Result<Command, RedisErr> {
+            pub fn parse(&self, frame: Frame, conn: Rc<RefCell<Connection>>) -> Result<Command, RedisErr> {
                 trace!("parse: {:?}", frame);
                 if let Frame::Array(frames) = frame {
                     self.trie
                         .get(&frame_to_string(&frames[0])?.to_uppercase())
-                        .ok_or(RedisErr::UnknownCommand)?(frames)
+                        .ok_or(RedisErr::UnknownCommand)?(frames,conn)
                 } else {
                     Err(RedisErr::InvalidProtocol)
                 }
@@ -102,6 +114,7 @@ def_command_impl_parse! {
     HSet, HGet,
     ZAdd, ZCard, ZRem,
     BFAdd, BFExists,
+    Publish,
     Del, Expire, Type, Object,
     Quit,
     Ping, Flush

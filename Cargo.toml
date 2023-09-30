@@ -24,8 +24,6 @@ path = "./marco"
 [dependencies.trie]
 path = "./trie"
 
-[dependencies.boardcast]
-path = "./boardcast"
 
 # [dependencies.bloomfilter]
 # path = "./bloomfilter"

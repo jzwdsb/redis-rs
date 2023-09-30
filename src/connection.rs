@@ -1,4 +1,4 @@
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{self, Error, ErrorKind, Read, Write};
 
 use bytes::{Buf, BytesMut};
 use mio::net::TcpStream;
@@ -8,6 +8,7 @@ use mio::event::Source;
 use crate::frame::Frame;
 use crate::RedisErr;
 
+#[derive(Debug)]
 pub struct Connection {
     stream: TcpStream,
     read_buffer: BytesMut,
@@ -66,6 +67,10 @@ impl Connection {
             }
         }
     }
+
+    pub fn source(&mut self) -> &mut TcpStream {
+        &mut self.stream
+    }
 }
 
 impl Source for Connection {
@@ -115,6 +120,19 @@ fn read_request(stream: &mut impl Read) -> Result<Vec<u8>, Error> {
         }
     }
     Ok(req_bytes)
+}
+
+impl Write for Connection {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
+        match self.write_frame(Frame::BulkString(buf.to_vec())) {
+            Ok(_) => Ok(buf.len()),
+            Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
+        }
+    }
+
+    fn flush(&mut self) -> Result<(), Error> {
+        self.stream.flush()
+    }
 }
 
 fn write_response(stream: &mut impl Write, response: &[u8]) -> Result<usize, Error> {

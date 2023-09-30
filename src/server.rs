@@ -2,13 +2,15 @@
 //! use mio to achieve non-blocking IO, multiplexing and event driven
 //! an event loop is used to handle all the IO events
 
-use crate::cmd::{Command,Parser};
+use crate::cmd::{Command, Parser};
 use crate::connection::Connection;
 use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::time::{Duration, SystemTime};
 
 use mio::net::TcpListener;
@@ -38,7 +40,7 @@ pub struct Server {
     poll: Poll,
     listener: TcpListener,
     events: Events,
-    sockets: HashMap<Token, Connection>,
+    sockets: HashMap<Token, Rc<RefCell<Connection>>>,
     token_count: Token,
     wait_duration: Duration,
     command_parser: Parser,
@@ -51,12 +53,11 @@ impl Server {
         let db = Database::new();
         let mut listener = TcpListener::bind(addr)?;
         let poll = Poll::new()?;
-        poll.registry()
-            .register(
-                &mut listener,
-                Token(0), // server is token 0
-                Interest::READABLE,
-            )?;
+        poll.registry().register(
+            &mut listener,
+            Token(0), // server is token 0
+            Interest::READABLE,
+        )?;
         Ok(Self {
             db: db,
             shutdown: false,
@@ -153,9 +154,10 @@ impl Server {
     }
 
     fn handle_request(&mut self, token: Token) -> Result<Option<Frame>, RedisErr> {
-        let req_data = self.sockets.get_mut(&token).unwrap().read_frame()?;
+        let conn = self.sockets.get(&token).unwrap().clone();
+        let req_data = conn.borrow_mut().read_frame()?;
 
-        let command = self.decode_frame(req_data)?;
+        let command = self.decode_frame(req_data, conn.clone())?;
 
         let resp = self.apply_command(&token, command);
 
@@ -164,8 +166,12 @@ impl Server {
         Ok(resp)
     }
 
-    fn decode_frame(&mut self, frame: Frame) -> Result<Command, RedisErr> {
-        match self.command_parser.parse(frame) {
+    fn decode_frame(
+        &mut self,
+        frame: Frame,
+        conn: Rc<RefCell<Connection>>,
+    ) -> Result<Command, RedisErr> {
+        match self.command_parser.parse(frame, conn) {
             Ok(command) => Ok(command),
             Err(e) => {
                 debug!("Failed to parse command: {}", e);
@@ -183,11 +189,16 @@ impl Server {
     }
 
     fn send_response(&mut self, token: Token, data: Frame) {
-        match self.sockets.get_mut(&token).unwrap().write_frame(data) {
+        let write_res = self
+            .sockets
+            .get(&token)
+            .unwrap()
+            .clone()
+            .borrow_mut()
+            .write_frame(data);
+        match write_res {
             Ok(_) => {}
-            Err(e) => {
-                self.handle_error(token, e);
-            }
+            Err(e) => self.handle_error(token, e),
         }
     }
 
@@ -200,7 +211,8 @@ impl Server {
                     .registry()
                     .register(&mut stream, token, Interest::READABLE)
                     .unwrap();
-                self.sockets.insert(token, Connection::new(stream));
+                self.sockets
+                    .insert(token, Rc::new(RefCell::new(Connection::new(stream))));
                 self.token_count.0 += 1;
             }
             Err(e) => {
@@ -210,9 +222,11 @@ impl Server {
     }
 
     fn invert_interest(&mut self, token: Token, interest: Interest) {
+        let mut conn = self.sockets.get(&token).unwrap().borrow_mut();
+
         self.poll
             .registry()
-            .reregister(self.sockets.get_mut(&token).unwrap(), token, interest)
+            .reregister(conn.source(), token, interest)
             .unwrap();
     }
 
@@ -225,8 +239,11 @@ impl Server {
         if connection.is_none() {
             return;
         }
-        let mut connection = connection.unwrap();
-        self.poll.registry().deregister(&mut connection).unwrap();
+        let mut connection = Rc::try_unwrap(connection.unwrap()).unwrap();
+        self.poll
+            .registry()
+            .deregister(connection.get_mut())
+            .unwrap();
     }
 
     fn poll(&mut self, timeout: Option<Duration>) -> Result<(), RedisErr> {
@@ -239,12 +256,12 @@ impl Server {
         let start_time = SystemTime::now();
 
         // check expired key
-        for (key, expire_at) in self.db.expire_table.clone() {
+        for (key, expire_at) in self.db.expire_items() {
             if start_time.elapsed().unwrap() > Duration::from_millis(100) {
                 return;
             }
-            if expire_at < SystemTime::now() {
-                self.db.del(&key);
+            if expire_at.cmp(&start_time) == std::cmp::Ordering::Less {
+                self.db.remove(&key);
             }
         }
     }

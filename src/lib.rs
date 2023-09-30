@@ -1,3 +1,4 @@
+mod boardcast;
 mod cmd;
 mod connection;
 mod db;

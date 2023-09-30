@@ -35,10 +35,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "boardcast"
-version = "0.1.0"
-
-[[package]]
 name = "bytes"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -234,7 +230,6 @@ name = "redis-rs"
 version = "0.1.0"
 dependencies = [
  "bloomfilter",
- "boardcast",
  "bytes",
  "env_logger",
  "log",

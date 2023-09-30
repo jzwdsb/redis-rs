@@ -1,8 +1,13 @@
 use log::trace;
 
+use crate::connection::Connection;
 use crate::value::Value;
 use crate::RedisErr;
 
+use crate::boardcast::{Receiver, Sender};
+
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::{
     collections::{HashMap, VecDeque},
     time::SystemTime,
@@ -53,16 +58,17 @@ a second thought, Maybe it's not nescery to implment all the date manipulation m
 There are duplicate code in the command layer and the database could only provide the basic data operate method.
 */
 
-#[derive(Debug)]
 pub struct Database {
-    pub table: HashMap<String, Entry>,
-    pub expire_table: HashMap<String, SystemTime>,
+    table: HashMap<String, Entry>,
+    publisher: HashMap<String, Sender>,
+    expire_table: HashMap<String, SystemTime>,
 }
 
 impl Database {
     pub fn new() -> Self {
         Self {
             table: HashMap::new(),
+            publisher: HashMap::new(),
             expire_table: HashMap::new(),
         }
     }
@@ -408,8 +414,37 @@ impl Database {
         }
     }
 
+    pub fn add_subscripter(&mut self, channel: &str, dest: Rc<RefCell<Connection>>) {
+        self.publisher
+            .entry(channel.to_string())
+            .or_insert_with(|| Sender::new())
+            .add_receiver(Receiver::new(dest))
+    }
+
+    #[allow(unused)]
+    pub fn remove_subscripter(&mut self, channel: &str) {
+        self.publisher.remove(channel);
+    }
+
+    pub fn expire_items(&self) -> Vec<(String, SystemTime)> {
+        let mut res = Vec::new();
+        for (key, expire_at) in self.expire_table.iter() {
+            res.push((key.clone(), expire_at.clone()))
+        }
+        res
+    }
+
+    pub fn publish(&mut self, channel: &str, message: &str) -> Result<usize, RedisErr> {
+        let sender = self.publisher.get_mut(channel);
+        match sender {
+            Some(sender) => Ok(sender.send(message.to_string())),
+            None => Ok(0),
+        }
+    }
+
     pub fn flush(&mut self) {
         self.table.clear();
+        self.expire_table.clear();
     }
 }
 
