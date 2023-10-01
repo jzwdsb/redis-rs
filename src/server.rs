@@ -211,8 +211,10 @@ impl Server {
                     .registry()
                     .register(&mut stream, token, Interest::READABLE)
                     .unwrap();
-                self.sockets
-                    .insert(token, Rc::new(RefCell::new(Connection::new(stream))));
+                self.sockets.insert(
+                    token,
+                    Rc::new(RefCell::new(Connection::new(token.0, stream))),
+                );
                 self.token_count.0 += 1;
             }
             Err(e) => {

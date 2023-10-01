@@ -10,14 +10,16 @@ use crate::RedisErr;
 
 #[derive(Debug)]
 pub struct Connection {
+    id: usize,
     stream: TcpStream,
     read_buffer: BytesMut,
     write_buffer: BytesMut,
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream) -> Self {
+    pub fn new(id: usize, stream: TcpStream) -> Self {
         Self {
+            id,
             stream: stream,
             read_buffer: BytesMut::with_capacity(4096),
             write_buffer: BytesMut::with_capacity(4096),
@@ -49,6 +51,10 @@ impl Connection {
             }
             Err(e) => return Err(e),
         }
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
     }
 
     pub fn write_frame(&mut self, frame: Frame) -> Result<(), RedisErr> {

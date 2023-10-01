@@ -41,7 +41,6 @@ pub struct Del {
 }
 
 impl Del {
-    #[allow(dead_code)]
     fn new(key: String) -> Self {
         Self { key }
     }
@@ -50,12 +49,7 @@ impl Del {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"DEL")?;
         let key = next_string(&mut iter)?; // key
-        Ok(Self { key })
-    }
-
-    #[allow(dead_code)]
-    fn key(&self) -> &str {
-        &self.key
+        Ok(Self::new(key))
     }
 
     pub fn apply(self, db: &mut Database) -> Frame {
@@ -83,16 +77,6 @@ impl Expire {
         let key = next_string(&mut iter)?; // key
         let expire = Duration::from_secs(next_integer(&mut iter)? as u64); // expire
         Ok(Self::new(key, expire))
-    }
-
-    #[allow(dead_code)]
-    fn key(&self) -> &str {
-        &self.key
-    }
-
-    #[allow(dead_code)]
-    fn expire(&self) -> &Duration {
-        &self.expire
     }
 
     pub fn apply(self, db: &mut Database) -> Frame {

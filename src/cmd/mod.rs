@@ -65,6 +65,9 @@ macro_rules! add_tire {
         $tire.insert("SUBSCRIBE", Box::new(|frames: Vec<Frame>, conn: Rc<RefCell<Connection>>| -> Result<Command, RedisErr> {
             Ok(Command::Subscribe(Subscribe::from_frames(frames, conn)?))
         }));
+        $tire.insert("UNSUBSCRIBE", Box::new(|frames: Vec<Frame>, conn: Rc<RefCell<Connection>>| -> Result<Command, RedisErr> {
+            Ok(Command::Unsubscribe(Unsubscribe::from_frames(frames, conn.borrow().id())?))
+        }));
     };
 }
 
@@ -75,7 +78,8 @@ macro_rules! def_command_impl_parse {
                 $($cmd($cmd),)*
 
                 // don't have a unified type for publish and subscribe
-                Subscribe(pub_sub::Subscribe),
+                Subscribe(Subscribe),
+                Unsubscribe(Unsubscribe),
             }
 
         impl Command {
@@ -84,6 +88,7 @@ macro_rules! def_command_impl_parse {
                 match self {
                     $(Command::$cmd(cmd) => cmd.apply(db),)*
                     Command::Subscribe(cmd) => cmd.apply(db),
+                    Command::Unsubscribe(cmd) => cmd.apply(db),
                 }
             }
         }

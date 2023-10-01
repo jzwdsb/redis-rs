@@ -28,16 +28,6 @@ impl LPush {
         Ok(Self::new(key, value))
     }
 
-    #[allow(dead_code)]
-    fn key(&self) -> &str {
-        &self.key
-    }
-
-    #[allow(dead_code)]
-    fn value(&self) -> &Vec<Vec<u8>> {
-        &self.values
-    }
-
     pub fn apply(self, db: &mut Database) -> Frame {
         match db.lpush(&self.key, self.values) {
             Ok(len) => Frame::Integer(len as i64),
@@ -60,7 +50,6 @@ pub struct LRange {
 }
 
 impl LRange {
-    #[allow(dead_code)]
     fn new(key: String, start: i64, stop: i64) -> Self {
         Self { key, start, stop }
     }
@@ -71,22 +60,7 @@ impl LRange {
         let key = next_string(&mut iter)?; // key
         let start = next_integer(&mut iter)?; // start
         let stop = next_integer(&mut iter)?; // stop
-        Ok(Self { key, start, stop })
-    }
-
-    #[allow(dead_code)]
-    fn key(&self) -> &str {
-        &self.key
-    }
-
-    #[allow(dead_code)]
-    fn start(&self) -> i64 {
-        self.start
-    }
-
-    #[allow(dead_code)]
-    fn stop(&self) -> i64 {
-        self.stop
+        Ok(Self::new(key, start, stop))
     }
 
     pub fn apply(self, db: &mut Database) -> Frame {

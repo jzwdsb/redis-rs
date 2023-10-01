@@ -352,7 +352,7 @@ impl Database {
         }
     }
 
-    #[allow(unused)]
+    #[allow(dead_code)]
     pub fn get_value_ref(&mut self, key: &str) -> Option<&Value> {
         match self.get_entry_ref(key) {
             Some(entry) => Some(&entry.value),
@@ -421,9 +421,13 @@ impl Database {
             .add_receiver(Receiver::new(dest))
     }
 
-    #[allow(unused)]
-    pub fn remove_subscripter(&mut self, channel: &str) {
-        self.publisher.remove(channel);
+    pub fn remove_subscripter(&mut self, channel: &str, conn_id: usize) {
+        match self.publisher.get_mut(channel) {
+            Some(sender) => {
+                sender.remove_receiver(vec![conn_id]);
+            }
+            None => {}
+        }
     }
 
     pub fn expire_items(&self) -> Vec<(String, SystemTime)> {

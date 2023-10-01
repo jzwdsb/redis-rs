@@ -70,6 +70,37 @@ impl Subscribe {
     }
 }
 
+#[derive(Debug)]
+pub struct Unsubscribe {
+    conn_id: usize,
+    channels: Vec<String>,
+}
+
+impl Unsubscribe {
+    fn new(conn_id: usize, channels: Vec<String>) -> Self {
+        Self { conn_id, channels }
+    }
+
+    pub fn from_frames(frames: Vec<Frame>, conn_id: usize) -> Result<Self, RedisErr> {
+        let mut iter = frames.into_iter();
+        check_cmd(&mut iter, b"UNSUBSCRIBE")?;
+        let mut channels = Vec::new();
+        while let Some(_) = iter.next() {
+            let channel = next_string(&mut iter)?;
+            channels.push(channel);
+        }
+        Ok(Self::new(conn_id, channels))
+    }
+
+    pub fn apply(self, db: &mut Database) -> Frame {
+        let cnt = self.channels.len();
+        for channel in self.channels {
+            db.remove_subscripter(&channel, self.conn_id);
+        }
+        Frame::Array(vec![Frame::SimpleString("unsubscribe".to_string()); cnt])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

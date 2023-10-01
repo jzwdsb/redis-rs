@@ -13,7 +13,6 @@ pub struct Get {
 }
 
 impl Get {
-    #[allow(dead_code)]
     pub fn new(key: String) -> Self {
         Self { key }
     }
@@ -22,12 +21,7 @@ impl Get {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"GET")?;
         let key = next_string(&mut iter)?;
-        Ok(Self { key })
-    }
-
-    #[allow(dead_code)]
-    fn key(&self) -> &str {
-        &self.key
+        Ok(Self::new(key))
     }
 
     pub fn apply(self, db: &mut Database) -> Frame {
@@ -99,7 +93,6 @@ pub struct Set {
 }
 
 impl Set {
-    #[allow(dead_code)]
     fn new(
         key: String,
         value: Vec<u8>,
@@ -168,16 +161,6 @@ impl Set {
         }
 
         Ok(Self::new(key, value, nx, xx, get, ex, exat, keepttl))
-    }
-
-    #[allow(dead_code)]
-    fn key(&self) -> &str {
-        &self.key
-    }
-
-    #[allow(dead_code)]
-    fn value(&self) -> &Vec<u8> {
-        &self.value
     }
 
     pub fn apply(self, db: &mut Database) -> Frame {
