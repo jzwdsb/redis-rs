@@ -51,16 +51,6 @@ pub struct Receiver {
     dest: Rc<RefCell<Connection>>,
 }
 
-// impl Write for Receiver {
-//     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-//         self.dest.borrow_mut().write(buf)
-//     }
-
-//     fn flush(&mut self) -> std::io::Result<()> {
-//         self.dest.borrow_mut().flush()
-//     }
-// }
-
 impl Receiver {
     pub fn new(dest: Rc<RefCell<Connection>>) -> Self {
         Self { dest: dest }

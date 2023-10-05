@@ -9,6 +9,7 @@ mod value;
 
 use std::fmt::Display;
 
+pub mod arg;
 pub mod server;
 
 #[derive(Debug, PartialEq, Eq, Clone)]

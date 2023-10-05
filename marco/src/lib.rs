@@ -204,3 +204,52 @@ fn impl_variant(name: &syn::Ident, variant: &Variant) -> proc_macro2::TokenStrea
 
     gen_variant
 }
+
+#[proc_macro_derive(Getter)]
+pub fn add_getter_ref(input: TokenStream) -> TokenStream {
+    let ast = syn::parse(input).unwrap();
+    let gen = impl_getter_ref(&ast);
+
+    gen
+}
+
+fn impl_getter_ref(ast: &syn::DeriveInput) -> TokenStream {
+    let struct_name = &ast.ident;
+    let fields = match &ast.data {
+        syn::Data::Struct(s) => &s.fields,
+        _ => panic!("only struct can be decorated"),
+    };
+
+    let mut gen = quote! {};
+
+    for field in fields.iter() {
+        let field_name = field.ident.as_ref().unwrap();
+        let field_type = &field.ty;
+        let field_name_str = field_name.to_string();
+        let get_ref_name = syn::Ident::new(
+            format!("get_{}_ref", field_name_str).as_str(),
+            field_name.span(),
+        );
+        let get_name = syn::Ident::new(
+            format!("get_{}", field_name_str).as_str(),
+            field_name.span(),
+        );
+        gen = quote! {
+            #gen
+            pub fn #get_ref_name(&self) -> &#field_type {
+                &self.#field_name
+            }
+            pub fn #get_name(&self) -> #field_type {
+                self.#field_name.clone()
+            }
+        };
+    }
+
+    gen = quote! {
+        impl #struct_name {
+            #gen
+        }
+    };
+
+    gen.into()
+}

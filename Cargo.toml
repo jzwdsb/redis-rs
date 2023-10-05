@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 bloomfilter = {version = "1.0.12"}
 bytes = {version = "1.0", features = ["serde"]}
+clap = {version = "4.4.6", features = ["derive"]}
 env_logger = {version = "0.10", features = ["default"]}
 log = {version = "0.4", features = ["std", "serde"]}
 mio = {version = "0.8", features = ["os-poll", "net"]}
@@ -23,7 +24,6 @@ path = "./marco"
 
 [dependencies.trie]
 path = "./trie"
-
 
 # [dependencies.bloomfilter]
 # path = "./bloomfilter"

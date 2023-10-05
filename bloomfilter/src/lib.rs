@@ -1,4 +1,4 @@
-
+//! TODO: implement a bloom filter
 pub trait BloomFilter {
     fn new() -> Self;
     fn insert(&mut self, key: &str);
