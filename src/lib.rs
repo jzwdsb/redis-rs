@@ -7,6 +7,8 @@ mod helper;
 mod traits;
 mod value;
 
+pub mod client;
+
 use std::fmt::Display;
 
 pub mod arg;
