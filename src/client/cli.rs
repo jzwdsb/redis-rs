@@ -54,7 +54,8 @@ impl Client {
     }
 
     pub fn open(addr: &str) -> Result<Self, Box<dyn Error>> {
-        let stream = TcpStream::connect(addr.parse::<SocketAddr>()?)?;
+        let stream = Box::new(TcpStream::connect(addr.parse::<SocketAddr>()?)?);
+        
         let conn = Connection::new(1, stream);
         Ok(Self::new(Conn::new(conn)))
     }

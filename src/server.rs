@@ -211,6 +211,7 @@ impl Server {
                     .registry()
                     .register(&mut stream, token, Interest::READABLE)
                     .unwrap();
+                let stream = Box::new(stream);
                 self.sockets.insert(
                     token,
                     Rc::new(RefCell::new(Connection::new(token.0, stream))),
@@ -241,10 +242,15 @@ impl Server {
         if connection.is_none() {
             return;
         }
-        let mut connection = Rc::try_unwrap(connection.unwrap()).unwrap();
+        let mut connection = match Rc::try_unwrap(connection.unwrap()) {
+            Ok(conn) => conn,
+            Err(_) => {
+                return;
+            }
+        };
         self.poll
             .registry()
-            .deregister(connection.get_mut())
+            .deregister(connection.get_mut().source())
             .unwrap();
     }
 

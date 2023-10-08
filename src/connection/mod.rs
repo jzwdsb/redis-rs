@@ -1,23 +1,28 @@
 use std::io::{self, Error, ErrorKind, Read, Write};
-
+use std::fmt::Debug;
 use bytes::{Buf, BytesMut};
-use mio::net::TcpStream;
 
 use mio::event::Source;
 
 use crate::frame::Frame;
 use crate::RedisErr;
 
+
+pub trait AsyncConnectionLike: Source + Read + Write + Debug {}
+impl AsyncConnectionLike for mio::net::TcpStream {}
+
+pub trait SyncConnectionLike: Read + Write + Debug {}
+
 #[derive(Debug)]
 pub struct Connection {
     id: usize,
-    stream: TcpStream,
+    stream: Box<dyn AsyncConnectionLike>,
     read_buffer: BytesMut,
     write_buffer: BytesMut,
 }
 
 impl Connection {
-    pub fn new(id: usize, stream: TcpStream) -> Self {
+    pub fn new(id: usize, stream: Box<dyn AsyncConnectionLike>) -> Self {
         Self {
             id,
             stream: stream,
@@ -74,32 +79,8 @@ impl Connection {
         }
     }
 
-    pub fn source(&mut self) -> &mut TcpStream {
+    pub fn source(&mut self) -> &mut Box<dyn AsyncConnectionLike> {
         &mut self.stream
-    }
-}
-
-impl Source for Connection {
-    fn register(
-        &mut self,
-        registry: &mio::Registry,
-        token: mio::Token,
-        interests: mio::Interest,
-    ) -> std::io::Result<()> {
-        return registry.register(&mut self.stream, token, interests);
-    }
-
-    fn reregister(
-        &mut self,
-        registry: &mio::Registry,
-        token: mio::Token,
-        interests: mio::Interest,
-    ) -> std::io::Result<()> {
-        return registry.reregister(&mut self.stream, token, interests);
-    }
-
-    fn deregister(&mut self, registry: &mio::Registry) -> std::io::Result<()> {
-        return registry.deregister(&mut self.stream);
     }
 }
 
