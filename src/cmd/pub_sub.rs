@@ -1,7 +1,7 @@
 //! support pub/sub comamnd
 
 use super::*;
-use crate::connection::Connection;
+use crate::connection::AsyncConnection;
 use crate::db::Database;
 use crate::frame::Frame;
 use crate::{connection, RedisErr};
@@ -38,18 +38,18 @@ impl Publish {
 
 #[derive(Debug)]
 pub struct Subscribe {
-    conn: Rc<RefCell<connection::Connection>>,
+    conn: Rc<RefCell<connection::AsyncConnection>>,
     channels: Vec<String>,
 }
 
 impl Subscribe {
-    fn new(channels: Vec<String>, conn: Rc<RefCell<connection::Connection>>) -> Self {
+    fn new(channels: Vec<String>, conn: Rc<RefCell<connection::AsyncConnection>>) -> Self {
         Self { channels, conn }
     }
 
     pub fn from_frames(
         frames: Vec<Frame>,
-        conn: Rc<RefCell<Connection>>,
+        conn: Rc<RefCell<AsyncConnection>>,
     ) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"SUBSCRIBE")?;

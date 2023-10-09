@@ -1,4 +1,4 @@
-use crate::connection::Connection;
+use crate::connection::{AsyncConnection, FrameWriter};
 use crate::frame::Frame::BulkString;
 
 use std::cell::RefCell;
@@ -48,11 +48,11 @@ impl Sender {
 
 #[derive(Clone)]
 pub struct Receiver {
-    dest: Rc<RefCell<Connection>>,
+    dest: Rc<RefCell<AsyncConnection>>,
 }
 
 impl Receiver {
-    pub fn new(dest: Rc<RefCell<Connection>>) -> Self {
+    pub fn new(dest: Rc<RefCell<AsyncConnection>>) -> Self {
         Self { dest: dest }
     }
 }

@@ -3,7 +3,7 @@
 //! an event loop is used to handle all the IO events
 
 use crate::cmd::{Command, Parser};
-use crate::connection::Connection;
+use crate::connection::{AsyncConnection, FrameReader, FrameWriter};
 use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
@@ -40,7 +40,7 @@ pub struct Server {
     poll: Poll,
     listener: TcpListener,
     events: Events,
-    sockets: HashMap<Token, Rc<RefCell<Connection>>>,
+    sockets: HashMap<Token, Rc<RefCell<AsyncConnection>>>,
     token_count: Token,
     wait_duration: Duration,
     command_parser: Parser,
@@ -169,7 +169,7 @@ impl Server {
     fn decode_frame(
         &mut self,
         frame: Frame,
-        conn: Rc<RefCell<Connection>>,
+        conn: Rc<RefCell<AsyncConnection>>,
     ) -> Result<Command, RedisErr> {
         match self.command_parser.parse(frame, conn) {
             Ok(command) => Ok(command),
@@ -214,7 +214,7 @@ impl Server {
                 let stream = Box::new(stream);
                 self.sockets.insert(
                     token,
-                    Rc::new(RefCell::new(Connection::new(token.0, stream))),
+                    Rc::new(RefCell::new(AsyncConnection::new(token.0, stream))),
                 );
                 self.token_count.0 += 1;
             }

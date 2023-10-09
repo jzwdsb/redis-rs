@@ -1,6 +1,6 @@
 use log::trace;
 
-use crate::connection::Connection;
+use crate::connection::AsyncConnection;
 use crate::value::Value;
 use crate::RedisErr;
 
@@ -414,7 +414,7 @@ impl Database {
         }
     }
 
-    pub fn add_subscripter(&mut self, channel: &str, dest: Rc<RefCell<Connection>>) {
+    pub fn add_subscripter(&mut self, channel: &str, dest: Rc<RefCell<AsyncConnection>>) {
         self.publisher
             .entry(channel.to_string())
             .or_insert_with(|| Sender::new())

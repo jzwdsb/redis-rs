@@ -35,7 +35,7 @@ pub use connections::*;
 mod db;
 pub use db::*;
 
-use crate::connection::Connection;
+use crate::connection::AsyncConnection;
 use crate::db::Database;
 use crate::frame::Frame;
 use crate::RedisErr;
@@ -45,7 +45,7 @@ use trie::Trie;
 
 use log::trace;
 
-type CommandParseFn = Box<dyn Fn(Vec<Frame>, Rc<RefCell<Connection>>) -> Result<Command, RedisErr>>;
+type CommandParseFn = Box<dyn Fn(Vec<Frame>, Rc<RefCell<AsyncConnection>>) -> Result<Command, RedisErr>>;
 
 pub struct Parser {
     trie: Trie<CommandParseFn>,
@@ -58,14 +58,14 @@ pub trait CommandApplyer {
 macro_rules! add_tire {
     ($tire:ident, $($cmd:ident),*) => {
         $(
-            $tire.insert(to_upper_case_str!($cmd), Box::new(|frames: Vec<Frame>, _: Rc<RefCell<Connection>>| -> Result<Command, RedisErr> {
+            $tire.insert(to_upper_case_str!($cmd), Box::new(|frames: Vec<Frame>, _: Rc<RefCell<AsyncConnection>>| -> Result<Command, RedisErr> {
                 Ok(Command::$cmd($cmd::from_frames(frames)?))
             }));
         )*
-        $tire.insert("SUBSCRIBE", Box::new(|frames: Vec<Frame>, conn: Rc<RefCell<Connection>>| -> Result<Command, RedisErr> {
+        $tire.insert("SUBSCRIBE", Box::new(|frames: Vec<Frame>, conn: Rc<RefCell<AsyncConnection>>| -> Result<Command, RedisErr> {
             Ok(Command::Subscribe(Subscribe::from_frames(frames, conn)?))
         }));
-        $tire.insert("UNSUBSCRIBE", Box::new(|frames: Vec<Frame>, conn: Rc<RefCell<Connection>>| -> Result<Command, RedisErr> {
+        $tire.insert("UNSUBSCRIBE", Box::new(|frames: Vec<Frame>, conn: Rc<RefCell<AsyncConnection>>| -> Result<Command, RedisErr> {
             Ok(Command::Unsubscribe(Unsubscribe::from_frames(frames, conn.borrow().id())?))
         }));
     };
@@ -99,7 +99,7 @@ macro_rules! def_command_impl_parse {
                 Self { trie }
             }
 
-            pub fn parse(&self, frame: Frame, conn: Rc<RefCell<Connection>>) -> Result<Command, RedisErr> {
+            pub fn parse(&self, frame: Frame, conn: Rc<RefCell<AsyncConnection>>) -> Result<Command, RedisErr> {
                 trace!("parse: {:?}", frame);
                 if let Frame::Array(frames) = frame {
                     self.trie

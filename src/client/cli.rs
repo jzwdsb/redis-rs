@@ -1,15 +1,17 @@
-use mio::net::TcpStream;
+use std::net::TcpStream;
+// use mio::net::TcpStream;
 use std::{error::Error, net::SocketAddr};
 
-use crate::connection::Connection;
+use crate::connection::{SyncConnection, FrameWriter, FrameReader};
 use crate::frame::Frame;
 
+
 pub struct Conn {
-    conn: Connection,
+    conn: SyncConnection,
 }
 
 impl Conn {
-    fn new(conn: Connection) -> Self {
+    fn new(conn: SyncConnection) -> Self {
         Self { conn: conn }
     }
 
@@ -41,7 +43,6 @@ impl Conn {
             _ => Err("Invalid response".into()),
         }
     }
-    
 }
 
 pub struct Client {
@@ -54,9 +55,9 @@ impl Client {
     }
 
     pub fn open(addr: &str) -> Result<Self, Box<dyn Error>> {
-        let stream = Box::new(TcpStream::connect(addr.parse::<SocketAddr>()?)?);
-        
-        let conn = Connection::new(1, stream);
+        let conn = TcpStream::connect(addr.parse::<SocketAddr>()?)?;
+        let stream = Box::new(conn);
+        let conn = SyncConnection::new(1, stream);
         Ok(Self::new(Conn::new(conn)))
     }
 

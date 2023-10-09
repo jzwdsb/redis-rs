@@ -5,10 +5,10 @@ use redis_rs::client::Client;
 mod test {
     #[allow(unused_imports)]
     use super::*;
-
+    use std::process::Child;
 
     #[allow(dead_code)]
-    fn setup() {
+    fn setup() -> Child {
         // Setup code here
         
 
@@ -16,27 +16,26 @@ mod test {
         std::process::Command::new("cargo")
             .arg("run")
             .spawn()
-            .expect("failed to execute process");
+            .expect("failed to execute process")
     }
 
     #[test]
     fn test_redis_integration() {
-        setup();
         // Connect to Redis
-        // TODO: fix the integration test with sync connection
-
+        // let mut resource = setup();
+        // // TODO: fix the integration test with sync connection
+        // std::thread::sleep(std::time::Duration::from_secs(5));
         // let mut client = Client::open("127.0.0.1:6379").unwrap();
         
         // let con = client.get_connection();
 
-        // // std::thread::sleep(std::time::Duration::from_secs(5));
         // // Set a key-value pair
         // let _: () = con.set("my_key", "my_value").unwrap();
-        // // std::thread::sleep(std::time::Duration::from_secs(5));
     
         // // Get the value of the key
         // let value = con.get("my_key").unwrap();
-        // // std::thread::sleep(std::time::Duration::from_secs(5));
-        // assert_eq!(value, "my_value".as_bytes());
+        // assert_eq!(value, "my_value".as_bytes()); 
+
+        // resource.kill().unwrap();
     }
 }
