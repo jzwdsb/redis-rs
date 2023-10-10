@@ -55,8 +55,6 @@ impl AsyncConnection {
     pub fn source(&mut self) -> &mut Box<dyn AsyncConnectionLike> {
         &mut self.stream
     }
-
-    
 }
 
 impl FrameWriter for AsyncConnection {
@@ -77,7 +75,6 @@ impl FrameWriter for AsyncConnection {
         }
     }
 }
-
 
 impl FrameReader for AsyncConnection {
     fn read_frame(&mut self) -> Result<Frame, RedisErr> {
@@ -119,26 +116,22 @@ impl FrameReader for SyncConnection {
     fn read_frame(&mut self) -> Result<Frame, RedisErr> {
         let mut buffer = vec![];
         loop {
-            match read_request(&mut self.stream) {
-                Ok(data) => {
-                    buffer.extend_from_slice(&data);
-                    match Frame::from_bytes(&buffer) {
-                        Ok(frame) => {
-                            return Ok(frame);
-                        }
-                        Err(e) => match e {
-                            RedisErr::FrameIncomplete => {
-                                continue;
-                            }
-                            _ => {
-                                return Err(e);
-                            }
-                        },
+            let mut data = vec![0; 1024];
+            let len = self.stream.read(&mut data)?;
+            data.truncate(len);
+            buffer.extend_from_slice(&data);
+            match Frame::from_bytes(&buffer) {
+                Ok(frame) => {
+                    return Ok(frame);
+                }
+                Err(e) => match e {
+                    RedisErr::FrameIncomplete => {
+                        continue;
                     }
-                }
-                Err(e) => {
-                    return Err(e.into());
-                }
+                    _ => {
+                        return Err(e);
+                    }
+                },
             }
         }
     }

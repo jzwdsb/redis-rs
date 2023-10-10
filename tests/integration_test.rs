@@ -1,41 +1,42 @@
-
 #[allow(unused_imports)]
 use redis_rs::client::Client;
 
 mod test {
     #[allow(unused_imports)]
     use super::*;
-    use std::process::Child;
+    use std::thread;
+    const REDIS_HOST: &str = "0.0.0.0";
+    const REDIS_PORT: u16 = 6379;
+    const MAX_CLIENTS: usize = 1024;
 
     #[allow(dead_code)]
-    fn setup() -> Child {
+    fn setup() {
         // Setup code here
-        
 
         // start redis server in the background
-        std::process::Command::new("cargo")
-            .arg("run")
-            .spawn()
-            .expect("failed to execute process")
+        thread::spawn(move || {
+            let mut server =
+                redis_rs::server::Server::new(REDIS_HOST, REDIS_PORT, MAX_CLIENTS).unwrap();
+            server.run().unwrap();
+        });
     }
 
     #[test]
-    fn test_redis_integration() {
+    fn test_redis_get_set() {
         // Connect to Redis
-        // let mut resource = setup();
-        // // TODO: fix the integration test with sync connection
-        // std::thread::sleep(std::time::Duration::from_secs(5));
-        // let mut client = Client::open("127.0.0.1:6379").unwrap();
-        
-        // let con = client.get_connection();
+        setup();
 
-        // // Set a key-value pair
-        // let _: () = con.set("my_key", "my_value").unwrap();
-    
-        // // Get the value of the key
-        // let value = con.get("my_key").unwrap();
-        // assert_eq!(value, "my_value".as_bytes()); 
+        // hold 1 second to wait for redis to start
+        std::thread::sleep(std::time::Duration::from_secs(1));
 
-        // resource.kill().unwrap();
+        let mut client = Client::open("127.0.0.1:6379").unwrap();
+
+        let con = client.get_connection();
+
+        // Set a key-value pair
+        let _: () = con.set("my_key", "my_value").unwrap();
+        // Get the value of the key
+        let value = con.get("my_key").unwrap();
+        assert_eq!(value, "my_value".as_bytes());
     }
 }
