@@ -6,6 +6,7 @@ mod frame;
 mod helper;
 mod traits;
 mod value;
+mod rdb;
 
 pub mod client;
 

@@ -1,6 +1,7 @@
 use log::trace;
 
 use crate::connection::AsyncConnection;
+use crate::rdb::RDB;
 use crate::value::Value;
 use crate::RedisErr;
 
@@ -449,6 +450,13 @@ impl Database {
     pub fn flush(&mut self) {
         self.table.clear();
         self.expire_table.clear();
+    }
+
+    // write the database to disk
+    pub fn presistent(&mut self, path: &str) {
+        // TODO: write the database to disk
+        let mut rdb = RDB::new();
+        rdb.write(path);
     }
 }
 
