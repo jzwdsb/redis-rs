@@ -1,18 +1,26 @@
+//! This file includes the implementation of a Redis client SDK in a synchronous way.
+//!
+//! When using this SDK, the I/O operations of this SDK will block the current thread from running.
+//! This SDK is still a work in progress.
+//!
+//! TODO: add documentation test for this module
+
+
+
 use std::net::TcpStream;
 // use mio::net::TcpStream;
 use std::{error::Error, net::SocketAddr};
 
-use crate::connection::{SyncConnection, FrameWriter, FrameReader};
+use crate::connection::{FrameReader, FrameWriter, SyncConnection};
 use crate::frame::Frame;
 
-
-pub struct Conn {
+pub struct SyncConn {
     conn: SyncConnection,
 }
 
-impl Conn {
+impl SyncConn {
     fn new(conn: SyncConnection) -> Self {
-        Self { conn: conn }
+        Self { conn }
     }
 
     pub fn get(&mut self, key: &str) -> Result<Vec<u8>, Box<dyn Error>> {
@@ -45,12 +53,12 @@ impl Conn {
     }
 }
 
-pub struct Client {
-    conn: Conn,
+pub struct BlockClient {
+    conn: SyncConn,
 }
 
-impl Client {
-    fn new(conn: Conn) -> Self {
+impl BlockClient {
+    fn new(conn: SyncConn) -> Self {
         Self { conn: conn }
     }
 
@@ -58,10 +66,10 @@ impl Client {
         let conn = TcpStream::connect(addr.parse::<SocketAddr>()?)?;
         let stream = Box::new(conn);
         let conn = SyncConnection::new(1, stream);
-        Ok(Self::new(Conn::new(conn)))
+        Ok(Self::new(SyncConn::new(conn)))
     }
 
-    pub fn get_connection(&mut self) -> &mut Conn {
+    pub fn get_connection(&mut self) -> &mut SyncConn {
         &mut self.conn
     }
 }

@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use redis_rs::client::Client;
+use redis_rs::client::BlockClient;
 
 mod test {
     #[allow(unused_imports)]
@@ -29,7 +29,7 @@ mod test {
         // hold 1 second to wait for redis to start
         std::thread::sleep(std::time::Duration::from_secs(1));
 
-        let mut client = Client::open("127.0.0.1:6379").unwrap();
+        let mut client = BlockClient::open("127.0.0.1:6379").unwrap();
 
         let con = client.get_connection();
 
