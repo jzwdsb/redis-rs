@@ -1,11 +1,9 @@
 //! Async client implementation
-//! 
+//!
 //! This module contains the implementation of an asynchronous client for Redis.
-//! 
+//!
 //! The client is implemented using the [tokio](https://docs.rs/tokio/1.9.0/tokio/) crate.
-//! 
-
-
+//!
 
 use std::error::Error;
 

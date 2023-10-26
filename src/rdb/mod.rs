@@ -73,7 +73,6 @@ impl RDB {
         }
     }
 
-
     fn write_db(index: usize, db: &HashMap<String, Value>, writer: &mut Box<dyn Write>) {
         writer.write(b"FE").unwrap();
         writer.write(b"00").unwrap();
@@ -83,7 +82,7 @@ impl RDB {
         }
     }
 
-    fn write_key_value_pair(key: &str, value: &Value,  writer: &mut Box<dyn Write>) {
+    fn write_key_value_pair(key: &str, value: &Value, writer: &mut Box<dyn Write>) {
         Self::write_key(key, writer);
         Self::write_value(value, writer);
     }

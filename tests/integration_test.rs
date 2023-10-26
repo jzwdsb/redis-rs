@@ -12,7 +12,7 @@ mod test {
     const REDIS_PORT: u16 = 6379;
     const MAX_CLIENTS: usize = 1024;
 
-    lazy_static!{
+    lazy_static! {
         static ref INIT: Once = Once::new();
     }
 

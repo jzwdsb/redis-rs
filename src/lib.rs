@@ -4,9 +4,9 @@ mod connection;
 mod db;
 mod frame;
 mod helper;
+mod rdb;
 mod traits;
 mod value;
-mod rdb;
 
 pub mod client;
 

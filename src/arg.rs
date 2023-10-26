@@ -1,7 +1,7 @@
 use clap::Parser;
 use marco::Getter;
 
-#[derive(Parser,Debug,Getter)]
+#[derive(Parser, Debug, Getter)]
 #[command(author, version, about, long_about)]
 pub struct Arg {
     #[clap(long, default_value = "0.0.0.0")]
@@ -18,4 +18,3 @@ impl Arg {
         Arg::parse_from(std::env::args())
     }
 }
-

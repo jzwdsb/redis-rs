@@ -45,7 +45,8 @@ use trie::Trie;
 
 use log::trace;
 
-type CommandParseFn = Box<dyn Fn(Vec<Frame>, Rc<RefCell<AsyncConnection>>) -> Result<Command, RedisErr>>;
+type CommandParseFn =
+    Box<dyn Fn(Vec<Frame>, Rc<RefCell<AsyncConnection>>) -> Result<Command, RedisErr>>;
 
 pub struct Parser {
     trie: Trie<CommandParseFn>,

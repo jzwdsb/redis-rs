@@ -5,8 +5,6 @@
 //!
 //! TODO: add documentation test for this module
 
-
-
 use std::net::TcpStream;
 // use mio::net::TcpStream;
 use std::{error::Error, net::SocketAddr};
