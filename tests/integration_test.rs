@@ -1,15 +1,21 @@
-#[allow(unused_imports)]
-use redis_rs::client::BlockClient;
-
 mod test {
-    #[allow(unused_imports)]
-    use super::*;
+
     use std::thread;
+
+    use lazy_static::lazy_static;
+    use std::sync::Once;
+
+    use redis_rs::client::AsyncClient;
+    use redis_rs::client::BlockClient;
+
     const REDIS_HOST: &str = "0.0.0.0";
     const REDIS_PORT: u16 = 6379;
     const MAX_CLIENTS: usize = 1024;
 
-    #[allow(dead_code)]
+    lazy_static!{
+        static ref INIT: Once = Once::new();
+    }
+
     fn setup() {
         // Setup code here
 
@@ -22,9 +28,9 @@ mod test {
     }
 
     #[test]
-    fn test_redis_get_set() {
-        // Connect to Redis
-        setup();
+    fn test_block_redis_cli() {
+        // start redis server
+        INIT.call_once(setup);
 
         // hold 1 second to wait for redis to start
         std::thread::sleep(std::time::Duration::from_secs(1));
@@ -37,6 +43,25 @@ mod test {
         let _: () = con.set("my_key", "my_value").unwrap();
         // Get the value of the key
         let value = con.get("my_key").unwrap();
+        assert_eq!(value, "my_value".as_bytes());
+    }
+
+    #[tokio::test]
+    async fn test_async_redis_cli() {
+        // start redis server
+        INIT.call_once(setup);
+
+        // hold 1 second to wait for redis to start
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        let mut client = AsyncClient::open("127.0.0.1:6379").await.unwrap();
+
+        let conn = client.get_connection();
+
+        // Set a key-value pair
+        let _: () = conn.set("my_key", "my_value").await.unwrap();
+        // Get the value of the key
+        let value = conn.get("my_key").await.unwrap();
         assert_eq!(value, "my_value".as_bytes());
     }
 }

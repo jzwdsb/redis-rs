@@ -20,6 +20,9 @@ skiplist = {version = "0.5.1"}
 tokio = {version = "1", features = ["full"]}
 trace = {version = "0.1.7"}
 
+[dev-dependencies]
+lazy_static = {version = "1.4"}
+
 [dependencies.marco]
 path = "./marco"
 
