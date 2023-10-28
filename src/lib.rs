@@ -4,7 +4,7 @@ mod connection;
 mod db;
 mod frame;
 mod helper;
-mod rdb;
+// mod rdb;
 mod traits;
 mod value;
 

@@ -19,6 +19,49 @@ use mio::{Events, Interest, Poll, Token};
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
+pub struct ServerBuilder {
+    addr: String,
+    port: u16,
+    max_client: usize,
+
+    handler_num: usize,
+}
+
+impl ServerBuilder {
+    pub fn new(/* ... */) -> Self {
+        Self {
+            addr: "0.0.0.0".to_string(),
+            port: 6379,
+            max_client: 1024,
+            handler_num: 1,
+        }
+    }
+
+    pub fn addr(mut self, addr: &str) -> Self {
+        self.addr = addr.to_string();
+        self
+    }
+
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
+
+    pub fn max_client(mut self, max_client: usize) -> Self {
+        self.max_client = max_client;
+        self
+    }
+
+    pub fn handler_num(mut self, handler_num: usize) -> Self {
+        self.handler_num = handler_num;
+        self
+    }
+
+    pub fn build(self) -> Result<Server, RedisErr> {
+        Server::new(&self.addr, self.port, self.max_client)
+    }
+}
+
 // Server is the main struct of the server
 // data retrieval and storage are done through the server
 // this process can divide into different layers
@@ -222,6 +265,11 @@ impl Server {
                 warn!("Failed to accept new connection: {}", e);
             }
         }
+    }
+
+    #[allow(dead_code)]
+    fn shutdown(&mut self) {
+        self.shutdown = true;
     }
 
     fn invert_interest(&mut self, token: Token, interest: Interest) {

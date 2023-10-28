@@ -1,7 +1,6 @@
 use log::trace;
 
 use crate::connection::AsyncConnection;
-use crate::rdb::RDB;
 use crate::value::Value;
 use crate::RedisErr;
 
@@ -453,10 +452,11 @@ impl Database {
     }
 
     // write the database to disk
-    pub fn presistent(&mut self, path: &str) {
+    #[allow(dead_code)]
+    pub fn presistent(&mut self, _path: &str) {
         // TODO: write the database to disk
-        let mut rdb = RDB::new();
-        rdb.write(path);
+        // let mut rdb = RDB::new();
+        // rdb.write(path);
     }
 }
 
