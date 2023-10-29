@@ -7,6 +7,7 @@ mod helper;
 // mod rdb;
 mod traits;
 mod value;
+mod worker;
 
 pub mod client;
 

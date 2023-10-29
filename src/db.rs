@@ -5,15 +5,32 @@ use crate::value::Value;
 use crate::RedisErr;
 
 use crate::boardcast::{Receiver, Sender};
+use crate::worker::Message;
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::{
+    cell::RefCell,
     collections::{HashMap, VecDeque},
+    rc::Rc,
+    sync::mpsc,
     time::SystemTime,
 };
 
 type Bytes = Vec<u8>;
+
+// database thread
+pub struct DBHandler {
+    db: Database,
+}
+
+impl DBHandler {
+    pub fn new() -> Self {
+        todo!("create a database thread")
+    }
+
+    pub fn run(&mut self, sender: mpsc::Sender<Message>, receiver: mpsc::Receiver<Message>) {
+        todo!("run the database thread")
+    }
+}
 
 #[derive(Debug)]
 pub struct Entry {

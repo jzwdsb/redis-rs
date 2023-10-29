@@ -4,12 +4,14 @@
 
 use crate::cmd::{Command, Parser};
 use crate::connection::{AsyncConnection, FrameReader, FrameWriter};
-use crate::db::Database;
+use crate::db::{DBHandler, Database};
 use crate::frame::Frame;
+use crate::worker;
 use crate::RedisErr;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::io::ErrorKind;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime};
 
@@ -24,7 +26,7 @@ pub struct ServerBuilder {
     port: u16,
     max_client: usize,
 
-    handler_num: usize,
+    worker_thread_num: usize,
 }
 
 impl ServerBuilder {
@@ -33,7 +35,7 @@ impl ServerBuilder {
             addr: "0.0.0.0".to_string(),
             port: 6379,
             max_client: 1024,
-            handler_num: 1,
+            worker_thread_num: 1,
         }
     }
 
@@ -52,13 +54,18 @@ impl ServerBuilder {
         self
     }
 
-    pub fn handler_num(mut self, handler_num: usize) -> Self {
-        self.handler_num = handler_num;
+    pub fn worker_thread_num(mut self, handler_num: usize) -> Self {
+        self.worker_thread_num = handler_num;
         self
     }
 
     pub fn build(self) -> Result<Server, RedisErr> {
-        Server::new(&self.addr, self.port, self.max_client)
+        Server::new(
+            &self.addr,
+            self.port,
+            self.max_client,
+            self.worker_thread_num,
+        )
     }
 }
 
@@ -87,11 +94,18 @@ pub struct Server {
     token_count: Token,
     wait_duration: Duration,
     command_parser: Parser,
+    worker_pool: worker::WorkerPool,
+    db_handler: DBHandler,
     response: HashMap<Token, Frame>,
 }
 
 impl Server {
-    pub fn new(addr: &str, port: u16, max_client: usize) -> Result<Self, RedisErr> {
+    pub fn new(
+        addr: &str,
+        port: u16,
+        max_client: usize,
+        worker_thread_num: usize,
+    ) -> Result<Self, RedisErr> {
         let addr: std::net::SocketAddr = format!("{}:{}", addr, port).parse()?;
         let db = Database::new();
         let mut listener = TcpListener::bind(addr)?;
@@ -101,6 +115,7 @@ impl Server {
             Token(0), // server is token 0
             Interest::READABLE,
         )?;
+
         Ok(Self {
             db: db,
             shutdown: false,
@@ -111,18 +126,38 @@ impl Server {
             token_count: Token(1),
             wait_duration: Duration::from_millis(100),
             command_parser: crate::cmd::Parser::new(),
+            worker_pool: worker::WorkerPool::new(worker_thread_num)?,
+            db_handler: DBHandler::new(),
             response: HashMap::new(),
         })
     }
 
     pub fn run(&mut self) -> Result<(), RedisErr> {
-        while !self.shutdown {
-            let (reads, writes) = self.collect_events();
-            let resp_cnt = self.handle_writes(writes);
-            let req_cnt = self.handle_reads(reads);
+        
+        // start worker threads
+        let (sender /* send response */, receiver /* receive request */) =
+            self.worker_pool.run()?;
 
-            if resp_cnt == 0 && req_cnt == 0 {
-                self.idle();
+        // start database thread
+        self.db_handler.run(sender, receiver);
+
+        while !self.shutdown {
+            // check if there is any new connections
+            match self.listener.accept() {
+                Ok((stream, addr)) => {
+                    trace!("Accept new connection, addr: {}", addr);
+                    let token = self.token_count;
+                    // add new connections to the worker thread
+                    self.worker_pool
+                        .add_socket(AsyncConnection::new(token.0, Box::new(stream)));
+                    self.token_count.0 += 1;
+                }
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    // no new connection
+                }
+                Err(e) => {
+                    warn!("Failed to accept new connection: {}", e);
+                }
             }
         }
 
