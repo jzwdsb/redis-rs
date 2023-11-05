@@ -67,7 +67,9 @@ impl Worker {
     }
 
     // called by main thread to start the worker
-    pub fn run(&mut self) {}
+    pub fn run(&mut self) {
+        // use tokio task
+    }
 
     fn poll(&mut self) {}
 

@@ -18,6 +18,7 @@ log = {version = "0.4", features = ["std", "serde"]}
 mio = {version = "0.8", features = ["os-poll", "net"]}
 skiplist = {version = "0.5.1"}
 tokio = {version = "1", features = ["full"]}
+tokio-stream = {version = "0.1.14", features = ["full"]}
 trace = {version = "0.1.7"}
 
 [dev-dependencies]

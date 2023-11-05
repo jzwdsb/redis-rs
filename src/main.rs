@@ -3,7 +3,8 @@ use redis_rs::server;
 
 extern crate env_logger;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::init();
     let arg = Arg::parse();
 

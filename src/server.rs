@@ -16,8 +16,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use mio::net::TcpListener;
-use mio::{Events, Interest, Poll, Token};
+use tokio::net::TcpListener;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -60,13 +59,13 @@ impl ServerBuilder {
         self
     }
 
-    pub fn build(self) -> Result<Server, RedisErr> {
+    pub async fn build(self) -> Result<Server, RedisErr> {
         Server::new(
             &self.addr,
             self.port,
             self.max_client,
             self.worker_thread_num,
-        )
+        ).await
     }
 }
 
@@ -88,20 +87,16 @@ impl ServerBuilder {
 pub struct Server {
     db: Database,
     shutdown: bool,
-    poll: Poll,
     listener: TcpListener,
-    events: Events,
     sockets: HashMap<usize, Arc<AsyncConnection>>,
-    token_count: Token,
     wait_duration: Duration,
     command_parser: Parser,
     worker_pool: worker::WorkerPool,
     db_handler: DBHandler,
-    response: HashMap<Token, Frame>,
 }
 
 impl Server {
-    pub fn new(
+    pub async fn new(
         addr: &str,
         port: u16,
         max_client: usize,
@@ -109,70 +104,37 @@ impl Server {
     ) -> Result<Self, RedisErr> {
         let addr: std::net::SocketAddr = format!("{}:{}", addr, port).parse()?;
         let db = Database::new();
-        let mut listener = TcpListener::bind(addr)?;
-        let poll = Poll::new()?;
-        poll.registry().register(
-            &mut listener,
-            Token(0), // server is token 0
-            Interest::READABLE,
-        )?;
+        let mut listener = tokio::net::TcpListener::bind(addr).await?;
+        
 
         Ok(Self {
             db: db,
             shutdown: false,
-            poll: poll,
             listener: listener,
-            events: Events::with_capacity(max_client),
             sockets: HashMap::new(),
-            token_count: Token(1),
             wait_duration: Duration::from_millis(100),
             command_parser: crate::cmd::Parser::new(),
             worker_pool: worker::WorkerPool::new(worker_thread_num)?,
             db_handler: DBHandler::new(),
-            response: HashMap::new(),
         })
     }
 
-    pub fn run(&mut self) -> Result<(), RedisErr> {
-        // start worker threads
-        let (sender /* send response */, receiver /* receive request */) =
-            self.worker_pool.run()?;
+    pub async  fn run(&mut self) -> Result<(), RedisErr> {
+        // start the worker pool
+        self.worker_pool.run().unwrap();
+    
+        // start the server pool
+        
 
-        // start database thread
-        self.db_handler.run(sender, receiver);
-
-        while !self.shutdown {
-            self.poll.poll(&mut self.events, Some(self.wait_duration)).unwrap();
-            for event in self.events.iter() {
-                match event.token() {
-                    Token(0) => match self.listener.accept() {
-                        Ok((mut stream, addr)) => {
-                            trace!("Accept new connection, addr: {}", addr);
-                            let token = self.token_count;
-                            self.poll
-                                .registry()
-                                .register(&mut stream, token, Interest::READABLE)
-                                .unwrap();
-                            let stream = Box::new(stream);
-                            self.sockets
-                                .insert(token.0, Arc::new(AsyncConnection::new(token.0, stream)));
-                            self.token_count.0 += 1;
-                        }
-                        Err(e) => {
-                            warn!("Failed to accept new connection: {}", e);
-                        }
-                    },
-                    Token(read) if event.is_readable() => {
-                        self.worker_pool
-                            .dispatch_read_event(self.sockets.get(&read).unwrap().clone());
-                        // use a callback to revert the interest  ?
-                    }
-                    Token(write) if event.is_writable() => {
-                        self.worker_pool
-                            .dispatch_write_event(self.sockets.get(&write).unwrap().clone());
-                        // use a callback to revert the interest ?
-                    }
-                    _ => unreachable!("Unexpected token"),
+        // waitting for new connections
+        loop {
+            match self.listener.accept().await {
+                Ok((stream, addr)) => {
+                    // handle new connections
+                    // dispatch it to the worker
+                }
+                Err(e) => {
+                    error!("Error accepting connection: {}", e);
                 }
             }
         }
