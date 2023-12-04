@@ -15,7 +15,8 @@ async fn main() {
         .port(arg.get_port())
         .max_client(arg.get_max_clients())
         .build()
+        .await
         .unwrap();
 
-    server.run().unwrap();
+    server.run().await.unwrap();
 }
