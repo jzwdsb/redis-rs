@@ -2,31 +2,24 @@
 //! use mio to achieve non-blocking IO, multiplexing and event driven
 //! an event loop is used to handle all the IO events
 
-use crate::cmd::{Command, Parser};
-use crate::connection::{AsyncConnection, FrameReader, FrameWriter};
-use crate::db::{DBHandler, Database};
-use crate::frame::Frame;
-use crate::worker;
+use crate::db::Database;
 use crate::RedisErr;
+use crate::{connection::AsyncConnection, handler::Handler};
 
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::io::ErrorKind;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::net::TcpListener;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use tokio::sync::Semaphore;
 
 pub struct ServerBuilder {
     addr: String,
     port: u16,
     max_client: usize,
-
-    worker_thread_num: usize,
 }
 
 impl ServerBuilder {
@@ -35,7 +28,6 @@ impl ServerBuilder {
             addr: "0.0.0.0".to_string(),
             port: 6379,
             max_client: 1024,
-            worker_thread_num: 1,
         }
     }
 
@@ -54,18 +46,8 @@ impl ServerBuilder {
         self
     }
 
-    pub fn worker_thread_num(mut self, handler_num: usize) -> Self {
-        self.worker_thread_num = handler_num;
-        self
-    }
-
     pub async fn build(self) -> Result<Server, RedisErr> {
-        Server::new(
-            &self.addr,
-            self.port,
-            self.max_client,
-            self.worker_thread_num,
-        ).await
+        Server::new(&self.addr, self.port, self.max_client).await
     }
 }
 
@@ -86,65 +68,53 @@ impl ServerBuilder {
 // client <- transport <- protocol <- response <- storage
 pub struct Server {
     db: Database,
-    shutdown: bool,
     listener: TcpListener,
     sockets: HashMap<usize, Arc<AsyncConnection>>,
+    limit_connections: Arc<Semaphore>,
     wait_duration: Duration,
-    command_parser: Parser,
-    worker_pool: worker::WorkerPool,
-    db_handler: DBHandler,
 }
 
 impl Server {
-    pub async fn new(
-        addr: &str,
-        port: u16,
-        max_client: usize,
-        worker_thread_num: usize,
-    ) -> Result<Self, RedisErr> {
+    pub async fn new(addr: &str, port: u16, max_client: usize) -> Result<Self, RedisErr> {
         let addr: std::net::SocketAddr = format!("{}:{}", addr, port).parse()?;
         let db = Database::new();
-        let mut listener = tokio::net::TcpListener::bind(addr).await?;
-        
+        let listener = tokio::net::TcpListener::bind(addr).await?;
 
         Ok(Self {
             db: db,
-            shutdown: false,
             listener: listener,
             sockets: HashMap::new(),
+            limit_connections: Arc::new(Semaphore::new(max_client)),
             wait_duration: Duration::from_millis(100),
-            command_parser: crate::cmd::Parser::new(),
-            worker_pool: worker::WorkerPool::new(worker_thread_num)?,
-            db_handler: DBHandler::new(),
         })
     }
 
-    pub async  fn run(&mut self) -> Result<(), RedisErr> {
-        // start the worker pool
-        self.worker_pool.run().unwrap();
-    
-        // start the server pool
-        
-
+    pub async fn run(&mut self) -> Result<(), RedisErr> {
         // waitting for new connections
         loop {
+            let premit = match self.limit_connections.clone().acquire_owned().await {
+                Ok(premit) => premit,
+                Err(e) => {
+                    error!("Error acquiring premit: {}", e);
+                    continue;
+                }
+            };
             match self.listener.accept().await {
                 Ok((stream, addr)) => {
-                    // handle new connections
-                    // dispatch it to the worker
+                    trace!("Accepting connection from: {}", addr);
+                    let handler = Handler::new(stream);
+                    tokio::spawn(async move {
+                        if let Err(err) = handler.run().await {
+                            error!("Error handling connection: {}", err);
+                        }
+                        drop(premit)
+                    });
                 }
                 Err(e) => {
                     error!("Error accepting connection: {}", e);
                 }
             }
         }
-
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn shutdown(&mut self) {
-        self.shutdown = true;
     }
 }
 

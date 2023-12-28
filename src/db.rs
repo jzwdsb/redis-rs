@@ -1,17 +1,13 @@
 use log::trace;
 
-use crate::connection::AsyncConnection;
 use crate::value::Value;
 use crate::RedisErr;
 
-use crate::boardcast::{Receiver, Sender};
-use crate::worker::Message;
+use crate::boardcast::Sender;
+// use crate::handler::Message;
 
 use std::{
-    cell::RefCell,
     collections::{HashMap, VecDeque},
-    rc::Rc,
-    sync::mpsc,
     time::SystemTime,
 };
 
@@ -27,9 +23,9 @@ impl DBHandler {
         todo!("create a database thread")
     }
 
-    pub fn run(&mut self, sender: mpsc::Sender<Message>, receiver: mpsc::Receiver<Message>) {
-        todo!("run the database thread")
-    }
+    // pub fn run(&mut self, sender: mpsc::Sender<Message>, receiver: mpsc::Receiver<Message>) {
+    //     todo!("run the database thread")
+    // }
 }
 
 #[derive(Debug)]
@@ -431,21 +427,21 @@ impl Database {
         }
     }
 
-    pub fn add_subscripter(&mut self, channel: &str, dest: Rc<RefCell<AsyncConnection>>) {
-        self.publisher
-            .entry(channel.to_string())
-            .or_insert_with(|| Sender::new())
-            .add_receiver(Receiver::new(dest))
-    }
+    // pub fn add_subscripter(&mut self, channel: &str, dest: Rc<RefCell<AsyncConnection>>) {
+    //     self.publisher
+    //         .entry(channel.to_string())
+    //         .or_insert_with(|| Sender::new())
+    //         .add_receiver(Receiver::new(dest))
+    // }
 
-    pub fn remove_subscripter(&mut self, channel: &str, conn_id: usize) {
-        match self.publisher.get_mut(channel) {
-            Some(sender) => {
-                sender.remove_receiver(vec![conn_id]);
-            }
-            None => {}
-        }
-    }
+    // pub fn remove_subscripter(&mut self, channel: &str, conn_id: usize) {
+    //     match self.publisher.get_mut(channel) {
+    //         Some(sender) => {
+    //             sender.remove_receiver(vec![conn_id]);
+    //         }
+    //         None => {}
+    //     }
+    // }
 
     pub fn expire_items(&self) -> Vec<(String, SystemTime)> {
         let mut res = Vec::new();

@@ -7,7 +7,7 @@ mod helper;
 // mod rdb;
 mod traits;
 mod value;
-mod worker;
+mod handler;
 
 pub mod client;
 
@@ -79,3 +79,5 @@ impl Into<String> for RedisErr {
         std::fmt::format(format_args!("{:?}", self))
     }
 }
+
+type Result<T> = std::result::Result<T, RedisErr>;

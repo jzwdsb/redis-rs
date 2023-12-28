@@ -17,16 +17,6 @@ impl Sender {
 
     pub fn send(&mut self, msg: String) -> usize {
         let mut count = 0;
-        for receiver in self.receiver.iter_mut() {
-            match receiver
-                .dest
-                .borrow_mut()
-                .write_frame(BulkString(msg.as_bytes().to_vec()))
-            {
-                Ok(_) => count += 1,
-                Err(_) => {}
-            };
-        }
 
         count
     }
@@ -36,13 +26,7 @@ impl Sender {
     }
 
     pub fn remove_receiver(&mut self, ids: Vec<usize>) {
-        let mut new_receiver = Vec::new();
-        for receiver in self.receiver.iter() {
-            if !ids.contains(&receiver.dest.borrow().id()) {
-                new_receiver.push(receiver.clone());
-            }
-        }
-        self.receiver = new_receiver;
+        
     }
 }
 

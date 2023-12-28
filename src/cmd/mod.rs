@@ -67,7 +67,7 @@ macro_rules! add_tire {
             Ok(Command::Subscribe(Subscribe::from_frames(frames, conn)?))
         }));
         $tire.insert("UNSUBSCRIBE", Box::new(|frames: Vec<Frame>, conn: Rc<RefCell<AsyncConnection>>| -> Result<Command, RedisErr> {
-            Ok(Command::Unsubscribe(Unsubscribe::from_frames(frames, conn.borrow().id())?))
+            Ok(Command::Unsubscribe(Unsubscribe::from_frames(frames)?))
         }));
     };
 }

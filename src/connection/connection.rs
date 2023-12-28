@@ -12,22 +12,16 @@ use tokio::net::TcpStream;
 
 #[derive(Debug)]
 pub struct AsyncConnection {
-    id: usize,
     stream: BufWriter<TcpStream>,
     read_buffer: BytesMut,
 }
 
 impl AsyncConnection {
-    pub fn new(id: usize, stream: TcpStream) -> Self {
+    pub fn new(stream: TcpStream) -> Self {
         Self {
-            id,
             stream: BufWriter::new(stream),
             read_buffer: BytesMut::with_capacity(4096),
         }
-    }
-
-    pub fn id(&self) -> usize {
-        self.id
     }
 
     fn parse_frame(&mut self) -> Result<Option<Frame>, RedisErr> {
@@ -81,7 +75,7 @@ impl SyncConnection {
 }
 
 impl SyncConnection {
-    fn read_frame(&mut self) -> Result<Frame, RedisErr> {
+    pub fn read_frame(&mut self) -> Result<Frame, RedisErr> {
         let mut buffer = vec![];
         loop {
             let mut data = vec![0; 1024];
@@ -104,7 +98,7 @@ impl SyncConnection {
         }
     }
 
-    fn write_frame(&mut self, frame: Frame) -> Result<(), RedisErr> {
+    pub fn write_frame(&mut self, frame: Frame) -> Result<(), RedisErr> {
         match write_response(&mut self.stream, &frame.serialize()) {
             Ok(_) => {
                 return Ok(());

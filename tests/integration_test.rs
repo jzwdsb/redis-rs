@@ -9,7 +9,6 @@ mod test {
 
     #[allow(unused_imports)]
     use redis_rs::client::AsyncClient;
-    use redis_rs::client::BlockClient;
 
     const REDIS_HOST: &str = "0.0.0.0";
     const REDIS_PORT: u16 = 6379;
@@ -19,14 +18,14 @@ mod test {
         static ref INIT: Once = Once::new();
     }
 
-    fn setup() {
-        // start redis server in the background
-        thread::spawn(move || {
-            let mut server =
-                redis_rs::server::Server::new(REDIS_HOST, REDIS_PORT, MAX_CLIENTS).unwrap();
-            server.run().unwrap();
-        });
-    }
+    // async fn setup() {
+    //     // start redis server in the background
+    //     thread::spawn(async move || {
+    //         let mut server =
+    //             redis_rs::server::Server::new(REDIS_HOST, REDIS_PORT, MAX_CLIENTS).await.unwrap();
+    //         server.run().await.unwrap();
+    //     });
+    // }
 
     // FIXME: github action is failed due to test timeout
     // TODO: use BDD framework to write test cases
