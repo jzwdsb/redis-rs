@@ -64,7 +64,7 @@ impl Subscribe {
     pub fn apply(self, db: &mut Database) -> Frame {
         let cnt = self.channels.len();
         for channel in self.channels {
-            db.add_subscripter(&channel, self.conn.clone())
+            // db.add_subscripter(&channel, self.conn.clone())
         }
         Frame::Array(vec![Frame::SimpleString("subscribe".to_string()); cnt])
     }
@@ -72,16 +72,15 @@ impl Subscribe {
 
 #[derive(Debug)]
 pub struct Unsubscribe {
-    conn_id: usize,
     channels: Vec<String>,
 }
 
 impl Unsubscribe {
-    fn new(conn_id: usize, channels: Vec<String>) -> Self {
-        Self { conn_id, channels }
+    fn new(channels: Vec<String>) -> Self {
+        Self {channels }
     }
 
-    pub fn from_frames(frames: Vec<Frame>, conn_id: usize) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"UNSUBSCRIBE")?;
         let mut channels = Vec::new();
@@ -89,13 +88,13 @@ impl Unsubscribe {
             let channel = next_string(&mut iter)?;
             channels.push(channel);
         }
-        Ok(Self::new(conn_id, channels))
+        Ok(Self::new(channels))
     }
 
     pub fn apply(self, db: &mut Database) -> Frame {
         let cnt = self.channels.len();
         for channel in self.channels {
-            db.remove_subscripter(&channel, self.conn_id);
+            // db.remove_subscripter(&channel);
         }
         Frame::Array(vec![Frame::SimpleString("unsubscribe".to_string()); cnt])
     }

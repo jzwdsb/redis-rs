@@ -3,7 +3,8 @@ use redis_rs::server;
 
 extern crate env_logger;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::init();
     let arg = Arg::parse();
 
@@ -14,7 +15,8 @@ fn main() {
         .port(arg.get_port())
         .max_client(arg.get_max_clients())
         .build()
+        .await
         .unwrap();
 
-    server.run().unwrap();
+    server.run().await.unwrap();
 }

@@ -2,29 +2,24 @@
 //! use mio to achieve non-blocking IO, multiplexing and event driven
 //! an event loop is used to handle all the IO events
 
-use crate::cmd::{Command, Parser};
-use crate::connection::{AsyncConnection, FrameReader, FrameWriter};
 use crate::db::Database;
-use crate::frame::Frame;
 use crate::RedisErr;
+use crate::{connection::AsyncConnection, handler::Handler};
 
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
-use std::time::{Duration, SystemTime};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
-use mio::net::TcpListener;
-use mio::{Events, Interest, Poll, Token};
+use tokio::net::TcpListener;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use tokio::sync::Semaphore;
 
 pub struct ServerBuilder {
     addr: String,
     port: u16,
     max_client: usize,
-
-    handler_num: usize,
 }
 
 impl ServerBuilder {
@@ -33,7 +28,6 @@ impl ServerBuilder {
             addr: "0.0.0.0".to_string(),
             port: 6379,
             max_client: 1024,
-            handler_num: 1,
         }
     }
 
@@ -52,13 +46,8 @@ impl ServerBuilder {
         self
     }
 
-    pub fn handler_num(mut self, handler_num: usize) -> Self {
-        self.handler_num = handler_num;
-        self
-    }
-
-    pub fn build(self) -> Result<Server, RedisErr> {
-        Server::new(&self.addr, self.port, self.max_client)
+    pub async fn build(self) -> Result<Server, RedisErr> {
+        Server::new(&self.addr, self.port, self.max_client).await
     }
 }
 
@@ -79,245 +68,51 @@ impl ServerBuilder {
 // client <- transport <- protocol <- response <- storage
 pub struct Server {
     db: Database,
-    shutdown: bool,
-    poll: Poll,
     listener: TcpListener,
-    events: Events,
-    sockets: HashMap<Token, Rc<RefCell<AsyncConnection>>>,
-    token_count: Token,
+    sockets: HashMap<usize, Arc<AsyncConnection>>,
+    limit_connections: Arc<Semaphore>,
     wait_duration: Duration,
-    command_parser: Parser,
-    response: HashMap<Token, Frame>,
 }
 
 impl Server {
-    pub fn new(addr: &str, port: u16, max_client: usize) -> Result<Self, RedisErr> {
+    pub async fn new(addr: &str, port: u16, max_client: usize) -> Result<Self, RedisErr> {
         let addr: std::net::SocketAddr = format!("{}:{}", addr, port).parse()?;
         let db = Database::new();
-        let mut listener = TcpListener::bind(addr)?;
-        let poll = Poll::new()?;
-        poll.registry().register(
-            &mut listener,
-            Token(0), // server is token 0
-            Interest::READABLE,
-        )?;
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+
         Ok(Self {
             db: db,
-            shutdown: false,
-            poll: poll,
             listener: listener,
-            events: Events::with_capacity(max_client),
             sockets: HashMap::new(),
-            token_count: Token(1),
+            limit_connections: Arc::new(Semaphore::new(max_client)),
             wait_duration: Duration::from_millis(100),
-            command_parser: crate::cmd::Parser::new(),
-            response: HashMap::new(),
         })
     }
 
-    pub fn run(&mut self) -> Result<(), RedisErr> {
-        while !self.shutdown {
-            let (reads, writes) = self.collect_events();
-            let resp_cnt = self.handle_writes(writes);
-            let req_cnt = self.handle_reads(reads);
-
-            if resp_cnt == 0 && req_cnt == 0 {
-                self.idle();
-            }
-        }
-
-        Ok(())
-    }
-
-    fn collect_events(&mut self) -> (Vec<Token>, HashSet<Token>) {
-        self.poll(Some(self.wait_duration)).unwrap();
-        let (mut reads, mut writes) = (Vec::new(), HashSet::new());
-        for event in self.events.iter() {
-            if event.is_readable() {
-                reads.push(event.token());
-            } else if event.is_writable() {
-                writes.insert(event.token());
-            }
-        }
-        (reads, writes)
-    }
-
-    fn handle_reads(&mut self, reads: Vec<Token>) -> usize {
-        let count = reads.len();
-        for read in reads {
-            match read {
-                // handle new connection
-                Token(0) => self.accept_new_connection(),
-                token => match self.handle_request(token) {
-                    Ok(resp) => {
-                        if let Some(resp) = resp {
-                            self.set_resp(token, resp);
-                            self.invert_interest(token, Interest::WRITABLE);
-                        }
-                    }
-                    Err(e) => {
-                        self.handle_error(token, e);
-                    }
-                },
-            }
-        }
-        count
-    }
-
-    fn handle_error(&mut self, token: Token, err: RedisErr) {
-        match err {
-            RedisErr::ConnectionAborted => self.drop_conncetion(&token),
-            _ => {
-                error!("Error: {:?}", err);
-            }
-        }
-    }
-
-    fn handle_writes(&mut self, writes: HashSet<Token>) -> usize {
-        if self.response.is_empty() || writes.is_empty() {
-            return 0;
-        }
-
-        let can_write = {
-            let mut can_write = Vec::new();
-            for token in self.response.keys().into_iter() {
-                if writes.contains(&token) {
-                    can_write.push(token.clone());
+    pub async fn run(&mut self) -> Result<(), RedisErr> {
+        // waitting for new connections
+        loop {
+            let premit = match self.limit_connections.clone().acquire_owned().await {
+                Ok(premit) => premit,
+                Err(e) => {
+                    error!("Error acquiring premit: {}", e);
+                    continue;
                 }
-            }
-            can_write
-        };
-        let count = can_write.len();
-        for token in can_write {
-            let resp = self.response.remove(&token).unwrap();
-            self.send_response(token, resp);
-            self.invert_interest(token, Interest::READABLE);
-        }
-        count
-    }
-
-    fn handle_request(&mut self, token: Token) -> Result<Option<Frame>, RedisErr> {
-        let conn = self.sockets.get(&token).unwrap().clone();
-        let req_data = conn.borrow_mut().read_frame()?;
-
-        let command = self.decode_frame(req_data, conn.clone())?;
-
-        let resp = self.apply_command(&token, command);
-
-        trace!("Apply command from token {:?}: {:?}", token, resp);
-
-        Ok(resp)
-    }
-
-    fn decode_frame(
-        &mut self,
-        frame: Frame,
-        conn: Rc<RefCell<AsyncConnection>>,
-    ) -> Result<Command, RedisErr> {
-        match self.command_parser.parse(frame, conn) {
-            Ok(command) => Ok(command),
-            Err(e) => {
-                debug!("Failed to parse command: {}", e);
-                Err(e)
-            }
-        }
-    }
-
-    fn apply_command(&mut self, token: &Token, command: Command) -> Option<Frame> {
-        if let Command::Quit(_) = command {
-            self.drop_conncetion(token);
-            return None;
-        }
-        Some(command.apply(&mut self.db))
-    }
-
-    fn send_response(&mut self, token: Token, data: Frame) {
-        let write_res = self
-            .sockets
-            .get(&token)
-            .unwrap()
-            .clone()
-            .borrow_mut()
-            .write_frame(data);
-        match write_res {
-            Ok(_) => {}
-            Err(e) => self.handle_error(token, e),
-        }
-    }
-
-    fn accept_new_connection(&mut self) {
-        match self.listener.accept() {
-            Ok((mut stream, addr)) => {
-                trace!("Accept new connection, addr: {}", addr);
-                let token = self.token_count;
-                self.poll
-                    .registry()
-                    .register(&mut stream, token, Interest::READABLE)
-                    .unwrap();
-                let stream = Box::new(stream);
-                self.sockets.insert(
-                    token,
-                    Rc::new(RefCell::new(AsyncConnection::new(token.0, stream))),
-                );
-                self.token_count.0 += 1;
-            }
-            Err(e) => {
-                warn!("Failed to accept new connection: {}", e);
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    fn shutdown(&mut self) {
-        self.shutdown = true;
-    }
-
-    fn invert_interest(&mut self, token: Token, interest: Interest) {
-        let mut conn = self.sockets.get(&token).unwrap().borrow_mut();
-
-        self.poll
-            .registry()
-            .reregister(conn.source(), token, interest)
-            .unwrap();
-    }
-
-    fn set_resp(&mut self, token: Token, resp: Frame) {
-        self.response.insert(token, resp);
-    }
-
-    fn drop_conncetion(&mut self, token: &Token) {
-        let connection = self.sockets.remove(&token);
-        if connection.is_none() {
-            return;
-        }
-        let mut connection = match Rc::try_unwrap(connection.unwrap()) {
-            Ok(conn) => conn,
-            Err(_) => {
-                return;
-            }
-        };
-        self.poll
-            .registry()
-            .deregister(connection.get_mut().source())
-            .unwrap();
-    }
-
-    fn poll(&mut self, timeout: Option<Duration>) -> Result<(), RedisErr> {
-        self.poll
-            .poll(&mut self.events, timeout)
-            .map_err(|_| RedisErr::PollError)
-    }
-
-    fn idle(&mut self) {
-        let start_time = SystemTime::now();
-
-        // check expired key
-        for (key, expire_at) in self.db.expire_items() {
-            if start_time.elapsed().unwrap() > Duration::from_millis(100) {
-                return;
-            }
-            if expire_at.cmp(&start_time) == std::cmp::Ordering::Less {
-                self.db.remove(&key);
+            };
+            match self.listener.accept().await {
+                Ok((stream, addr)) => {
+                    trace!("Accepting connection from: {}", addr);
+                    let handler = Handler::new(stream);
+                    tokio::spawn(async move {
+                        if let Err(err) = handler.run().await {
+                            error!("Error handling connection: {}", err);
+                        }
+                        drop(premit)
+                    });
+                }
+                Err(e) => {
+                    error!("Error accepting connection: {}", e);
+                }
             }
         }
     }
