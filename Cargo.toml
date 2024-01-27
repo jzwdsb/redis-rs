@@ -29,5 +29,8 @@ path = "./marco"
 [dependencies.trie]
 path = "./trie"
 
+[dependencies.thread_pool]
+path = "./thread_pool"
+
 # [dependencies.bloomfilter]
 # path = "./bloomfilter"
