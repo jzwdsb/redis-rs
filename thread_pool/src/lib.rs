@@ -124,10 +124,10 @@ impl ThreadPool {
         self.sender.send(Message::NewJob(job)).unwrap();
     }
 
-    /// Shutdown the thread pool.
+    /// Join all threads in the thread pool.
     /// after calling this function, the thread pool will no longer accept new jobs;
     /// it will wait for all active jobs to finish and then terminate the worker threads.
-    pub fn shutdown(self) {
+    pub fn join(self) {
         for _ in 0..self.workers.len() {
             self.sender.send(Message::Terminate).unwrap();
         }
@@ -166,7 +166,7 @@ mod tests {
                 value.fetch_add(1, Ordering::SeqCst);
             });
         }
-        pool.shutdown();
+        pool.join();
         
         assert_eq!(value.load(Ordering::SeqCst), 10);
         println!("value = {}", value.load(Ordering::SeqCst));
