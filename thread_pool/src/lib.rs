@@ -143,7 +143,7 @@ impl ThreadPool {
 mod tests {
     use super::*;
 
-    use std::sync::{Arc, Mutex};
+    use std::sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex};
 
     #[test]
     fn test_thread_pool() {
@@ -157,18 +157,18 @@ mod tests {
 
         println!("Shutting down.");
 
-        let value = Arc::new(Mutex::new(0));
+        let value = Arc::new(AtomicU64::new(0));
 
         for _ in 0..10 {
             let value = Arc::clone(&value);
 
             pool.execute(move || {
-                let mut num = value.lock().unwrap();
-
-                *num += 1;
+                value.fetch_add(1, Ordering::SeqCst);
             });
         }
-
-        println!("value = {}", *value.lock().unwrap());
+        pool.shutdown();
+        
+        assert_eq!(value.load(Ordering::SeqCst), 10);
+        println!("value = {}", value.load(Ordering::SeqCst));
     }
 }
