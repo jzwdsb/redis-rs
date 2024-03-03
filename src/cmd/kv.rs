@@ -1,11 +1,14 @@
+//! KV commands
+
 use super::*;
-use crate::db::Database;
+
 use crate::frame::Frame;
-use crate::RedisErr;
+use crate::Result;
+use crate::{db::DB, RedisErr};
 
 use marco::Applyer;
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Applyer)]
 pub struct Get {
@@ -17,14 +20,15 @@ impl Get {
         Self { key }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"GET")?;
         let key = next_string(&mut iter)?;
         Ok(Self::new(key))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
         match db.get(&self.key) {
             Ok(value) => Frame::BulkString(value),
             Err(e) => match e {
@@ -48,7 +52,7 @@ impl MGet {
         Self { key }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"MGET").unwrap();
         let mut key = Vec::new();
@@ -61,7 +65,8 @@ impl MGet {
         Ok(Self::new(key))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
         let mut result = Vec::new();
         for k in self.key {
             match db.get(&k) {
@@ -83,24 +88,24 @@ impl MGet {
 #[derive(Debug, Applyer)]
 pub struct Set {
     key: String,
-    value: Vec<u8>,
+    value: Bytes,
     nx: bool,
     xx: bool,
     get: bool,
     ex: Option<Duration>,
-    exat: Option<SystemTime>,
+    exat: Option<Instant>,
     keepttl: bool,
 }
 
 impl Set {
     fn new(
         key: String,
-        value: Vec<u8>,
+        value: Bytes,
         nx: bool,
         xx: bool,
         get: bool,
         ex: Option<Duration>,
-        exat: Option<SystemTime>,
+        exat: Option<Instant>,
         keepttl: bool,
     ) -> Self {
         Self {
@@ -116,7 +121,7 @@ impl Set {
     }
 
     // SET key value [NX] [XX] [GET] [EX <seconds>] [PX <milliseconds>] [KEEPTTL]
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"SET")?;
 
@@ -124,6 +129,7 @@ impl Set {
         let value = next_bytes(&mut iter)?; // value
         let (mut nx, mut xx, mut get, mut keepttl) = (false, false, false, false);
         let (mut ex, mut exat) = (None, None);
+        let now = SystemTime::now();
         while iter.len() > 0 {
             let next_opt = next_string(&mut iter)?;
             match next_opt.to_ascii_uppercase().as_str() {
@@ -138,11 +144,19 @@ impl Set {
                     ex = Some(Duration::from_millis(next_integer(&mut iter)? as u64));
                 }
                 "EXAT" => {
-                    exat = Some(UNIX_EPOCH + Duration::from_secs(next_integer(&mut iter)? as u64));
+                    let exat_ts = UNIX_EPOCH + Duration::from_secs(next_integer(&mut iter)? as u64);
+                    if exat_ts < now {
+                        return Err(RedisErr::SyntaxError);
+                    }
+                    exat = Some(Instant::now() + exat_ts.duration_since(now).unwrap());
                 }
                 "PXAT" => {
-                    exat =
-                        Some(UNIX_EPOCH + Duration::from_millis(next_integer(&mut iter)? as u64));
+                    let exat_ts =
+                        UNIX_EPOCH + Duration::from_millis(next_integer(&mut iter)? as u64);
+                    if exat_ts < now {
+                        return Err(RedisErr::SyntaxError);
+                    }
+                    exat = Some(Instant::now() + exat_ts.duration_since(now).unwrap());
                 }
                 _ => {
                     return Err(RedisErr::SyntaxError);
@@ -163,9 +177,10 @@ impl Set {
         Ok(Self::new(key, value, nx, xx, get, ex, exat, keepttl))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
         let expire_at = match (self.ex, self.exat) {
-            (Some(d), None) => Some(SystemTime::now() + d),
+            (Some(d), None) => Some(Instant::now() + d),
             (None, Some(t)) => Some(t),
             _ => None,
         };
@@ -194,15 +209,15 @@ impl Set {
 
 #[derive(Debug, Applyer)]
 pub struct MSet {
-    pairs: Vec<(String, Vec<u8>)>,
+    pairs: Vec<(String, Bytes)>,
 }
 
 impl MSet {
-    pub fn new(pairs: Vec<(String, Vec<u8>)>) -> Self {
+    pub fn new(pairs: Vec<(String, Bytes)>) -> Self {
         Self { pairs }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"MSET")?;
 
@@ -218,7 +233,8 @@ impl MSet {
         Ok(Self::new(pairs))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
         for (key, value) in self.pairs {
             match db.set(key, value, false, false, false, false, None) {
                 Ok(_) => {}
@@ -238,10 +254,10 @@ mod test {
 
     #[test]
     fn test_get() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = Get::from_frames(vec![
-            Frame::BulkString(b"get".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"get")),
+            Frame::BulkString(Bytes::from_static(b"key")),
         ])
         .unwrap();
         let result = cmd.apply(&mut db);
@@ -250,11 +266,11 @@ mod test {
 
     #[test]
     fn test_mget() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = MGet::from_frames(vec![
-            Frame::BulkString(b"mget".to_vec()),
-            Frame::BulkString(b"key1".to_vec()),
-            Frame::BulkString(b"key2".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"mget")),
+            Frame::BulkString(Bytes::from_static(b"key1")),
+            Frame::BulkString(Bytes::from_static(b"key2")),
         ])
         .unwrap();
 
@@ -264,13 +280,13 @@ mod test {
 
     #[test]
     fn test_mset() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = MSet::from_frames(vec![
-            Frame::BulkString(b"mset".to_vec()),
-            Frame::BulkString(b"key1".to_vec()),
-            Frame::BulkString(b"value1".to_vec()),
-            Frame::BulkString(b"key2".to_vec()),
-            Frame::BulkString(b"value2".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"mset")),
+            Frame::BulkString(Bytes::from_static(b"key1")),
+            Frame::BulkString(Bytes::from_static(b"value1")),
+            Frame::BulkString(Bytes::from_static(b"key2")),
+            Frame::BulkString(Bytes::from_static(b"value2")),
         ])
         .unwrap();
 
@@ -280,11 +296,11 @@ mod test {
 
     #[test]
     fn test_set() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = Set::from_frames(vec![
             Frame::SimpleString("set".to_string()),
             Frame::SimpleString("key".to_string()),
-            Frame::BulkString(b"value".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"value")),
         ])
         .unwrap();
         let result = cmd.apply(&mut db);

@@ -1,22 +1,25 @@
+//! List commands
+
 use super::*;
-use crate::db::Database;
+
+use crate::db::DB;
 use crate::frame::Frame;
-use crate::RedisErr;
+use crate::{RedisErr, Result};
 
 use marco::Applyer;
 
 #[derive(Debug, Applyer)]
 pub struct LPush {
     key: String,
-    values: Vec<Vec<u8>>,
+    values: Vec<Bytes>,
 }
 
 impl LPush {
-    fn new(key: String, values: Vec<Vec<u8>>) -> Self {
+    fn new(key: String, values: Vec<Bytes>) -> Self {
         Self { key, values }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"LPUSH")?;
 
@@ -28,7 +31,8 @@ impl LPush {
         Ok(Self::new(key, value))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
         match db.lpush(&self.key, self.values) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
@@ -54,7 +58,7 @@ impl LRange {
         Self { key, start, stop }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"LRANGE")?;
         let key = next_string(&mut iter)?; // key
@@ -63,7 +67,8 @@ impl LRange {
         Ok(Self::new(key, start, stop))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
         match db.lrange(&self.key, self.start, self.stop) {
             Ok(values) => Frame::Array(
                 values
@@ -88,13 +93,13 @@ mod test {
 
     #[test]
     fn test_lpush() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = LPush::from_frames(vec![
-            Frame::BulkString(b"lpush".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
-            Frame::BulkString(b"1".to_vec()),
-            Frame::BulkString(b"2".to_vec()),
-            Frame::BulkString(b"3".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"lpush")),
+            Frame::BulkString(Bytes::from_static(b"key")),
+            Frame::BulkString(Bytes::from_static(b"1")),
+            Frame::BulkString(Bytes::from_static(b"2")),
+            Frame::BulkString(Bytes::from_static(b"3")),
         ])
         .unwrap();
         let result = cmd.apply(&mut db);
@@ -103,10 +108,10 @@ mod test {
 
     #[test]
     fn test_lrange() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = LRange::from_frames(vec![
-            Frame::BulkString(b"lrange".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"lrange")),
+            Frame::BulkString(Bytes::from_static(b"key")),
             Frame::Integer(0),
             Frame::Integer(-1),
         ])

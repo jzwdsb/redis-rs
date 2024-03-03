@@ -18,7 +18,7 @@ target/
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
-.vscode/*
+.vscode/
 .devcontainer/
 
 # Local History for Visual Studio Code

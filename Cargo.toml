@@ -10,6 +10,7 @@ name = "redis-rs"
 path = "src/main.rs"
 
 [dependencies]
+async-stream = {version = "0.3.0"}
 bloomfilter = {version = "1.0.12"}
 bytes = {version = "1.0", features = ["serde"]}
 clap = {version = "4.4.6", features = ["derive"]}
@@ -18,7 +19,9 @@ log = {version = "0.4", features = ["std", "serde"]}
 mio = {version = "0.8", features = ["os-poll", "net"]}
 skiplist = {version = "0.5.1"}
 tokio = {version = "1", features = ["full"]}
+tokio-stream = {version = "0.1.14", features = ["full"]}
 trace = {version = "0.1.7"}
+
 
 [dev-dependencies]
 lazy_static = {version = "1.4"}

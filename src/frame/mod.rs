@@ -2,11 +2,11 @@
 //! RESP is defined as a protocol in the Redis documentation:
 //! https://redis.io/docs/reference/protocol-spec/
 
-use crate::RedisErr;
+use crate::{RedisErr, Result};
 
 use std::fmt::Display;
 
-type Bytes = Vec<u8>;
+use bytes::Bytes;
 
 // RESP protocol definition
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +44,7 @@ impl Display for Frame {
 }
 
 impl Frame {
-    pub fn from_bytes(data: &[u8]) -> Result<Frame, RedisErr> {
+    pub fn from_bytes(data: &[u8]) -> Result<Frame> {
         if data.len() == 0 {
             return Err(RedisErr::FrameIncomplete);
         }
@@ -108,7 +108,7 @@ impl Frame {
                 }
 
                 // remove \r\n
-                let bulk_string = data[..num].to_vec();
+                let bulk_string = Bytes::copy_from_slice(&data[..num]);
                 Ok(Frame::BulkString(bulk_string))
             }
             // Arrays *2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n
@@ -202,28 +202,28 @@ impl Frame {
                 result.push(b'$');
                 result.extend_from_slice(b"-1");
                 result.extend_from_slice(b"\r\n");
-                result
+                Bytes::from(result)
             }
             Frame::SimpleString(s) => {
                 let mut result = Vec::<u8>::new();
                 result.push(b'+');
                 result.extend_from_slice(s.as_bytes());
                 result.extend_from_slice(b"\r\n");
-                result
+                Bytes::from(result)
             }
             Frame::Error(s) => {
                 let mut result = Vec::<u8>::new();
                 result.push(b'-');
                 result.extend_from_slice(s.as_bytes());
                 result.extend_from_slice(b"\r\n");
-                result
+                Bytes::from(result)
             }
             Frame::Integer(i) => {
                 let mut result = Vec::<u8>::new();
                 result.push(b':');
                 result.extend_from_slice(i.to_string().as_bytes());
                 result.extend_from_slice(b"\r\n");
-                result
+                Bytes::from(result)
             }
             Frame::BulkString(s) => {
                 let mut result = Vec::<u8>::new();
@@ -232,7 +232,7 @@ impl Frame {
                 result.extend_from_slice(b"\r\n");
                 result.extend_from_slice(&s);
                 result.extend_from_slice(b"\r\n");
-                result
+                Bytes::from(result)
             }
             Frame::Array(v) => {
                 let mut result = Vec::<u8>::new();
@@ -242,7 +242,7 @@ impl Frame {
                 for protocol in v {
                     result.extend(protocol.serialize());
                 }
-                result
+                Bytes::from(result)
             }
         }
     }
@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(command.is_ok(), true);
         assert_eq!(
             command.unwrap(),
-            Frame::BulkString("SET a b".as_bytes().to_vec())
+            Frame::BulkString(Bytes::from_static(b"SET a b"))
         );
 
         let data = "+OK\r\n".as_bytes();
@@ -296,8 +296,8 @@ mod tests {
         assert_eq!(
             command.unwrap(),
             Frame::Array(vec![
-                Frame::BulkString("hello".as_bytes().to_vec()),
-                Frame::BulkString("world".as_bytes().to_vec())
+                Frame::BulkString(Bytes::from_static(b"hello")),
+                Frame::BulkString(Bytes::from_static(b"world"))
             ])
         );
 

@@ -1,84 +1,63 @@
-use bytes::{Buf, BytesMut};
-use std::fmt::Debug;
-use std::io::{Error, ErrorKind, Read, Write};
+use super::SyncConnectionLike;
 
 use crate::frame::Frame;
-use crate::RedisErr;
+use crate::{RedisErr, Result};
 
-use super::{AsyncConnectionLike, FrameReader, FrameWriter, SyncConnectionLike};
+use std::fmt::Debug;
+use std::io::{ErrorKind, Read, Write};
+
+use bytes::{Bytes, BytesMut};
+use log::trace;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
+use tokio::net::TcpStream;
 
 #[derive(Debug)]
 pub struct AsyncConnection {
-    id: usize,
-    stream: Box<dyn AsyncConnectionLike>,
+    stream: BufWriter<TcpStream>,
     read_buffer: BytesMut,
-    write_buffer: BytesMut,
 }
 
 impl AsyncConnection {
-    pub fn new(id: usize, stream: Box<dyn AsyncConnectionLike>) -> Self {
+    pub fn new(stream: TcpStream) -> Self {
         Self {
-            id,
-            stream: stream,
+            stream: BufWriter::new(stream),
             read_buffer: BytesMut::with_capacity(4096),
-            write_buffer: BytesMut::with_capacity(4096),
         }
     }
 
-    fn parse_frame(&mut self) -> Result<Frame, RedisErr> {
+    fn parse_frame(&mut self) -> Result<Option<Frame>> {
         match Frame::from_bytes(&self.read_buffer) {
             Ok(frame) => {
-                return Ok(frame);
+                return Ok(Some(frame));
             }
+            Err(RedisErr::FrameIncomplete) => return Ok(None),
             Err(e) => return Err(e),
         }
     }
 
-    pub fn id(&self) -> usize {
-        self.id
-    }
-
-    pub fn source(&mut self) -> &mut Box<dyn AsyncConnectionLike> {
-        &mut self.stream
-    }
-}
-
-impl FrameWriter for AsyncConnection {
-    fn write_frame(&mut self, frame: Frame) -> Result<(), RedisErr> {
-        self.write_buffer
-            .extend_from_slice(frame.serialize().as_slice());
-        match write_response(&mut self.stream, &self.write_buffer) {
-            Ok(len) => {
-                self.write_buffer.advance(len);
-                return Ok(());
+    pub async fn read_frame(&mut self) -> Result<Frame> {
+        loop {
+            if let Some(frame) = self.parse_frame()? {
+                self.read_buffer.clear();
+                return Ok(frame);
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                return Ok(());
-            }
-            Err(e) => {
-                return Err(e.into());
+
+            if self.stream.read_buf(&mut self.read_buffer).await? == 0 {
+                return Err(RedisErr::ConnectionAborted);
             }
         }
     }
-}
+    pub async fn write_frame(&mut self, frame: Frame) -> Result<()> {
+        let data = frame.serialize();
+        trace!(
+            "writing frame {}",
+            String::from_utf8_lossy(&data.to_vec().as_slice())
+        );
+        self.stream.write_all(&data).await?;
 
-impl FrameReader for AsyncConnection {
-    fn read_frame(&mut self) -> Result<Frame, RedisErr> {
-        match read_request(&mut self.stream) {
-            Ok(data) => {
-                self.read_buffer.extend_from_slice(&data);
-                match self.parse_frame() {
-                    Ok(frame) => {
-                        self.read_buffer.clear();
-                        return Ok(frame);
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-            Err(e) => {
-                return Err(e.into());
-            }
-        }
+        // flush the stream so the client can see the response immediately
+        self.stream.flush().await?;
+        Ok(())
     }
 }
 
@@ -98,8 +77,8 @@ impl SyncConnection {
     }
 }
 
-impl FrameReader for SyncConnection {
-    fn read_frame(&mut self) -> Result<Frame, RedisErr> {
+impl SyncConnection {
+    pub fn read_frame(&mut self) -> Result<Frame> {
         let mut buffer = vec![];
         loop {
             let mut data = vec![0; 1024];
@@ -121,10 +100,8 @@ impl FrameReader for SyncConnection {
             }
         }
     }
-}
 
-impl FrameWriter for SyncConnection {
-    fn write_frame(&mut self, frame: Frame) -> Result<(), RedisErr> {
+    pub fn write_frame(&mut self, frame: Frame) -> Result<()> {
         match write_response(&mut self.stream, &frame.serialize()) {
             Ok(_) => {
                 return Ok(());
@@ -136,32 +113,29 @@ impl FrameWriter for SyncConnection {
     }
 }
 
-fn read_request(stream: &mut impl Read) -> Result<Vec<u8>, Error> {
+fn read_request(stream: &mut impl Read) -> Result<Bytes> {
     let mut buffer = [0; 1024];
     let mut req_bytes = Vec::new();
     loop {
         match stream.read(&mut buffer) {
             Ok(0) => {
-                return Err(Error::new(
-                    ErrorKind::ConnectionAborted,
-                    "connection aborted",
-                ));
+                return Err(RedisErr::ConnectionAborted);
             }
             Ok(n) => {
-                req_bytes.extend_from_slice(&buffer[0..n]);
+                req_bytes.extend_from_slice(&buffer[..n]);
             }
             Err(e) if e.kind() == ErrorKind::WouldBlock => {
                 break;
             }
             Err(e) => {
-                return Err(e);
+                return Err(e.into());
             }
         }
     }
-    Ok(req_bytes)
+    Ok(Bytes::from(req_bytes))
 }
 
-fn write_response(stream: &mut impl Write, response: &[u8]) -> Result<usize, Error> {
+fn write_response(stream: &mut impl Write, response: &[u8]) -> Result<usize> {
     let mut response = response;
     let mut cnt = 0;
     loop {
@@ -177,7 +151,7 @@ fn write_response(stream: &mut impl Write, response: &[u8]) -> Result<usize, Err
                 break;
             }
             Err(e) => {
-                return Err(e);
+                return Err(e.into());
             }
         }
     }

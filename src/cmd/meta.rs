@@ -1,11 +1,13 @@
+//! Meta commands
+
 use super::*;
-use crate::db::Database;
+use crate::db::DB;
 use crate::frame::Frame;
-use crate::RedisErr;
+use crate::Result;
 
 use marco::Applyer;
 
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Applyer)]
 pub struct Type {
@@ -17,7 +19,7 @@ impl Type {
         Self { key }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         if frames.len() != 2 {
             return Err(RedisErr::WrongNumberOfArguments);
         }
@@ -27,7 +29,7 @@ impl Type {
         Ok(Self::new(key))
     }
 
-    pub fn apply(self, db: &Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
         match db.get_type(&self.key) {
             Some(t) => Frame::SimpleString(t.to_string()),
             None => Frame::SimpleString("none".to_string()),
@@ -45,14 +47,15 @@ impl Del {
         Self { key }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"DEL")?;
         let key = next_string(&mut iter)?; // key
         Ok(Self::new(key))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
         match db.del(&self.key) {
             Some(_) => Frame::Integer(1),
             None => Frame::Integer(0),
@@ -71,7 +74,7 @@ impl Expire {
         Self { key, expire }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"EXPIRE")?;
         let key = next_string(&mut iter)?; // key
@@ -79,8 +82,9 @@ impl Expire {
         Ok(Self::new(key, expire))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
-        let expire_at = SystemTime::now() + self.expire;
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
+        let expire_at = Instant::now() + self.expire;
         match db.expire(&self.key, expire_at) {
             Ok(()) => Frame::Integer(1),
             Err(e) => match e {
@@ -110,7 +114,7 @@ impl Object {
         Self { key, option: opt }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         if frames.len() != 3 {
             return Err(RedisErr::WrongNumberOfArguments);
         }
@@ -127,19 +131,20 @@ impl Object {
         Ok(Self::new(key, option))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
         match self.option {
-            ObjectOption::Encoding => Frame::SimpleString("raw".to_string()),
-            ObjectOption::Idletime => match db.get_entry_ref(&self.key) {
-                Some(t) => Frame::Integer(t.get_touched_at().elapsed().unwrap().as_secs() as i64),
-                None => Frame::Integer(-1),
+            ObjectOption::Encoding => {
+                // only raw encoding is supported for now
+                Frame::SimpleString("raw".to_string())
+            }
+            ObjectOption::Idletime => match db.get_object_last_touch(&self.key) {
+                Some(last_touch) => Frame::Integer(last_touch.elapsed().as_secs() as i64),
+                None => Frame::Nil,
             },
-            ObjectOption::Refcount => {
-                unimplemented!("ObjectOption::Refcount")
-            }
-            ObjectOption::Frequency => {
-                unimplemented!("ObjectOption::Frequency")
-            }
+            // don't support refcount
+            ObjectOption::Refcount => Frame::Integer(0),
+            // don't support frequency
+            ObjectOption::Frequency => Frame::Integer(0),
         }
     }
 }
@@ -150,10 +155,10 @@ mod test {
 
     #[test]
     fn test_del() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = Del::from_frames(vec![
-            Frame::BulkString(b"del".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"del")),
+            Frame::BulkString(Bytes::from_static(b"key")),
         ])
         .unwrap();
         let result = cmd.apply(&mut db);
@@ -162,10 +167,10 @@ mod test {
 
     #[test]
     fn test_expire() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = Expire::from_frames(vec![
-            Frame::BulkString(b"expire".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"expire")),
+            Frame::BulkString(Bytes::from_static(b"key")),
             Frame::Integer(10),
         ])
         .unwrap();
@@ -175,10 +180,10 @@ mod test {
 
     #[test]
     fn test_type() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = Type::from_frames(vec![
-            Frame::BulkString(b"type".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"type")),
+            Frame::BulkString(Bytes::from_static(b"key")),
         ])
         .unwrap();
         let result = cmd.apply(&mut db);

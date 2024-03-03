@@ -15,7 +15,6 @@
 //!
 //! ```rust
 //! extern crate thread_pool;
-//
 //! ```
 //!
 //! ## Example
@@ -35,10 +34,14 @@
 //!   }
 //! }
 //!
+#![warn(missing_docs)]
+#![warn(missing_debug_implementations)]
+#![allow(dead_code)]
 
 use crossbeam_channel::{Receiver, Sender};
 use std::thread;
 
+#[derive(Debug)]
 struct Worker {
     id: usize,
     thread: thread::JoinHandle<()>,
@@ -54,6 +57,8 @@ enum Message {
     Terminate,
 }
 
+/// A thread pool implementation in Rust.
+#[derive(Debug)]
 pub struct ThreadPool {
     workers: Vec<Worker>,
     sender: Sender<Message>,
@@ -138,12 +143,14 @@ impl ThreadPool {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex};
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    };
 
     #[test]
     fn test_thread_pool() {
@@ -167,7 +174,7 @@ mod tests {
             });
         }
         pool.join();
-        
+
         assert_eq!(value.load(Ordering::SeqCst), 10);
         println!("value = {}", value.load(Ordering::SeqCst));
     }

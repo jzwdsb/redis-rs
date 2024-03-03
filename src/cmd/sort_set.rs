@@ -1,7 +1,9 @@
+//! Sort Set commands
+
 use super::*;
-use crate::db::Database;
+use crate::db::DB;
 use crate::frame::Frame;
-use crate::RedisErr;
+use crate::Result;
 
 use marco::Applyer;
 
@@ -14,7 +16,7 @@ pub struct ZAdd {
     gt: bool,
     ch: bool,
     incr: bool,
-    zset: Vec<(f64, Vec<u8>)>,
+    zset: Vec<(f64, Bytes)>,
 }
 
 impl ZAdd {
@@ -26,7 +28,7 @@ impl ZAdd {
         gt: bool,
         ch: bool,
         incr: bool,
-        zset: Vec<(f64, Vec<u8>)>,
+        zset: Vec<(f64, Bytes)>,
     ) -> Self {
         Self {
             key,
@@ -41,7 +43,7 @@ impl ZAdd {
     }
 
     // ZADD key [NX|XX] [CH] [INCR] score member [score member ...]
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         if frames.len() < 3 {
             return Err(RedisErr::WrongNumberOfArguments);
         }
@@ -106,7 +108,8 @@ impl ZAdd {
         Ok(Self::new(key, nx, xx, lt, gt, ch, incr, zset))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
         match db.zadd(
             &self.key, self.nx, self.xx, self.lt, self.gt, self.ch, self.incr, self.zset,
         ) {
@@ -132,7 +135,7 @@ impl ZCard {
         Self { key }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         if frames.len() != 2 {
             return Err(RedisErr::WrongNumberOfArguments);
         }
@@ -142,7 +145,8 @@ impl ZCard {
         Ok(Self::new(key))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
         match db.zcard(&self.key) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
@@ -159,15 +163,15 @@ impl ZCard {
 #[derive(Debug, Applyer)]
 pub struct ZRem {
     key: String,
-    members: Vec<Vec<u8>>,
+    members: Vec<Bytes>,
 }
 
 impl ZRem {
-    fn new(key: String, members: Vec<Vec<u8>>) -> Self {
+    fn new(key: String, members: Vec<Bytes>) -> Self {
         Self { key, members }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         if frames.len() < 3 {
             return Err(RedisErr::WrongNumberOfArguments);
         }
@@ -182,7 +186,8 @@ impl ZRem {
         Ok(Self::new(key, members))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
+        let db = db;
         match db.zrem(&self.key, self.members) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
@@ -202,12 +207,12 @@ mod test {
 
     #[test]
     fn test_zadd() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = ZAdd::from_frames(vec![
-            Frame::BulkString(b"zadd".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
-            Frame::BulkString(b"1".to_vec()),
-            Frame::BulkString(b"one".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"zadd")),
+            Frame::BulkString(Bytes::from_static(b"key")),
+            Frame::BulkString(Bytes::from_static(b"1")),
+            Frame::BulkString(Bytes::from_static(b"one")),
         ])
         .unwrap();
         let result = cmd.apply(&mut db);
@@ -216,10 +221,10 @@ mod test {
 
     #[test]
     fn test_zcard() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = ZCard::from_frames(vec![
-            Frame::BulkString(b"zcard".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"zcard")),
+            Frame::BulkString(Bytes::from_static(b"key")),
         ])
         .unwrap();
         let result = cmd.apply(&mut db);
@@ -228,11 +233,11 @@ mod test {
 
     #[test]
     fn test_zrem() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = ZRem::from_frames(vec![
-            Frame::BulkString(b"zrem".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
-            Frame::BulkString(b"one".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"zrem")),
+            Frame::BulkString(Bytes::from_static(b"key")),
+            Frame::BulkString(Bytes::from_static(b"one")),
         ])
         .unwrap();
         let result = cmd.apply(&mut db);

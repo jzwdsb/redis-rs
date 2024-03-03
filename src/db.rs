@@ -1,87 +1,70 @@
-use log::trace;
+//! Database module
 
-use crate::connection::AsyncConnection;
-use crate::value::Value;
-use crate::RedisErr;
 
-use crate::boardcast::{Receiver, Sender};
-
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::{
-    collections::{HashMap, VecDeque},
-    time::SystemTime,
+use crate::{
+    value::Value,
+    RedisErr, Result,
 };
 
-type Bytes = Vec<u8>;
+use std::{
+    collections::{BTreeSet, HashMap, VecDeque},
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
-#[derive(Debug)]
-pub struct Entry {
-    value: Value,
-    expire_at: Option<SystemTime>,
-    touch_at: SystemTime,
+use bytes::Bytes;
+use log::{debug, trace};
+use tokio::sync::{broadcast, Notify};
+
+pub struct DBDropGuard {
+    db: DB,
 }
 
-impl Entry {
-    #[allow(dead_code)]
-    pub fn new(value: Value, expire_at: Option<SystemTime>) -> Self {
-        Self {
-            value,
-            expire_at,
-            touch_at: SystemTime::now(),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn get_value(&self) -> &Value {
-        &self.value
-    }
-
-    #[allow(dead_code)]
-    pub fn get_touched_at(&self) -> SystemTime {
-        self.touch_at
-    }
-
-    #[allow(dead_code)]
-    pub fn set_touch_at(&mut self, touch_at: SystemTime) {
-        self.touch_at = touch_at;
-    }
-
-    #[allow(dead_code)]
-    pub fn get_expire_at(&self) -> Option<SystemTime> {
-        self.expire_at
-    }
-}
-
-/*
-a second thought, Maybe it's not nescery to implment all the date manipulation method in the database layer.
-There are duplicate code in the command layer and the database could only provide the basic data operate method.
-*/
-
-pub struct Database {
-    table: HashMap<String, Entry>,
-    publisher: HashMap<String, Sender>,
-    expire_table: HashMap<String, SystemTime>,
-}
-
-impl Database {
+impl DBDropGuard {
     pub fn new() -> Self {
-        Self {
-            table: HashMap::new(),
-            publisher: HashMap::new(),
-            expire_table: HashMap::new(),
-        }
+        Self { db: DB::new() }
     }
 
-    pub fn get(&mut self, key: &str) -> Result<Bytes, RedisErr> {
+    pub fn db(&self) -> DB {
+        self.db.clone()
+    }
+}
+
+impl Drop for DBDropGuard {
+    fn drop(&mut self) {
+        self.db.shutdown_purge_task();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DB {
+    db: Arc<Shared>,
+}
+
+impl DB {
+    pub fn new() -> Self {
+        let shard = Arc::new(Shared {
+            state: Mutex::new(State::new()),
+            background_task: Notify::new(),
+        });
+
+        // spawn a background task to purge expired keys
+        tokio::spawn(purge_expired_tasks(shard.clone()));
+
+        Self { db: shard }
+    }
+
+    pub fn get(&mut self, key: &str) -> Result<Bytes> {
         trace!("Get key: {}", key);
-        let entry = self.get_entry_ref(key);
+        let mut state = self.db.state.lock().unwrap();
+        let entry = state.table.get(key);
         match entry {
             Some(entry) => {
                 // check expire on read
                 if let Some(expire_at) = entry.expire_at {
-                    if expire_at < SystemTime::now() {
-                        self.remove(key);
+                    if expire_at < Instant::now() {
+                        state.table.remove(key);
+                        state.expire_table.remove(&(key.to_string(), expire_at));
                         return Err(RedisErr::KeyNotFound);
                     }
                 }
@@ -102,8 +85,8 @@ impl Database {
         xx: bool,
         get: bool,
         keepttl: bool,
-        expire_at: Option<SystemTime>,
-    ) -> Result<Option<Bytes>, RedisErr> {
+        expire_at: Option<Instant>,
+    ) -> Result<Option<Bytes>> {
         trace!(
             "Set key: {}, value: {:?}, nx: {}, xx: {}, get: {}, keepttl: {}, expire_at: {:?}",
             key,
@@ -114,12 +97,10 @@ impl Database {
             keepttl,
             expire_at
         );
-        let mut entry = Entry {
-            value: Value::KV(value),
-            expire_at: expire_at,
-            touch_at: SystemTime::now(),
-        };
-        let old = self.get_entry_ref(&key);
+
+        let mut state = self.db.state.lock().unwrap();
+        let mut entry = Entry::new(Value::KV(value), expire_at);
+        let old = state.table.get(&key);
         if nx && old.is_some() {
             return Err(RedisErr::NoAction);
         }
@@ -129,23 +110,43 @@ impl Database {
         if keepttl && old.is_some() {
             entry.expire_at = old.unwrap().expire_at;
         }
+        let mut notify = false;
         if let Some(expire_at) = entry.expire_at {
-            self.expire_table.insert(key.clone(), expire_at);
+            notify = state
+                .next_expire()
+                .map(|next| next > expire_at)
+                .unwrap_or(true);
         }
 
-        let old = self.table.insert(key, entry);
+        let old = state.table.insert(key.clone(), entry);
         if get && old.is_some() {
             return Ok(Some(old.unwrap().value.to_kv().unwrap()));
+        }
+        if let Some(old) = old {
+            if let Some(expire_at) = old.expire_at {
+                state.expire_table.remove(&(key.clone(), expire_at));
+            }
+        }
+        if let Some(expire_at) = expire_at {
+            state.expire_table.insert((key, expire_at));
+        }
+
+        // drop the lock before notify the background task
+        // avoid the background task to wait for the lock
+        drop(state);
+        if notify {
+            self.db.background_task.notify_one();
         }
         Ok(None)
     }
 
-    pub fn expire(&mut self, key: &str, expire_at: SystemTime) -> Result<(), RedisErr> {
-        let entry = self.get_entry_mut(key);
+    pub fn expire(&mut self, key: &str, expire_at: Instant) -> Result<()> {
+        let mut state = self.db.state.lock().unwrap();
+        let entry = state.table.get_mut(key);
         match entry {
             Some(entry) => {
                 entry.expire_at = Some(expire_at);
-                self.expire_table.insert(key.to_string(), expire_at);
+                state.expire_table.insert((key.to_string(), expire_at));
                 Ok(())
             }
             None => Err(RedisErr::KeyNotFound),
@@ -156,8 +157,9 @@ impl Database {
         self.remove(key)
     }
 
-    pub fn lpush(&mut self, key: &str, values: Vec<Bytes>) -> Result<usize, RedisErr> {
-        let entry = self.get_entry_mut(key);
+    pub fn lpush(&mut self, key: &str, values: Vec<Bytes>) -> Result<usize> {
+        let mut state = self.db.state.lock().unwrap();
+        let entry = state.table.get_mut(key);
         let value_len = values.len();
         match entry {
             Some(entry) => {
@@ -176,19 +178,17 @@ impl Database {
             None => {
                 let mut list = VecDeque::new();
                 list.extend(values);
-                let entry = Entry {
-                    value: Value::List(list),
-                    expire_at: None,
-                    touch_at: SystemTime::now(),
-                };
-                self.set_entry(&key, entry);
+                let entry = Entry::new(Value::List(list), None);
+                state.table.insert(key.to_string(), entry);
+
                 Ok(value_len)
             }
         }
     }
 
-    pub fn lrange(&mut self, key: &str, start: i64, stop: i64) -> Result<Vec<Bytes>, RedisErr> {
-        let entry = self.get_entry_ref(key);
+    pub fn lrange(&mut self, key: &str, start: i64, stop: i64) -> Result<Vec<Bytes>> {
+        let state = self.db.state.lock().unwrap();
+        let entry = state.table.get(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_list() {
@@ -228,12 +228,9 @@ impl Database {
         }
     }
 
-    pub fn hset(
-        &mut self,
-        key: String,
-        field_values: Vec<(String, Bytes)>,
-    ) -> Result<usize, RedisErr> {
-        let entry = self.get_entry_mut(&key);
+    pub fn hset(&mut self, key: String, field_values: Vec<(String, Bytes)>) -> Result<usize> {
+        let mut state = self.db.state.lock().unwrap();
+        let entry = state.table.get_mut(&key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_hash() {
@@ -248,24 +245,21 @@ impl Database {
                 Ok(value_len)
             }
             None => {
-                let mut map: HashMap<String, Vec<u8>> = HashMap::new();
+                let mut map = HashMap::new();
                 let res = field_values.len();
                 for (field, value) in field_values {
                     map.insert(field, value);
                 }
-                let entry = Entry {
-                    value: Value::Hash(map),
-                    expire_at: None,
-                    touch_at: SystemTime::now(),
-                };
-                self.set_entry(&key, entry);
+                let entry = Entry::new(Value::Hash(map), None);
+                state.table.insert(key, entry);
                 Ok(res)
             }
         }
     }
 
-    pub fn hget(&mut self, key: &str, field: &str) -> Result<Option<Bytes>, RedisErr> {
-        let entry = self.get_entry_ref(key);
+    pub fn hget(&mut self, key: &str, field: &str) -> Result<Option<Bytes>> {
+        let state = self.db.state.lock().unwrap();
+        let entry = state.table.get(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_hash() {
@@ -288,8 +282,9 @@ impl Database {
         ch: bool,
         incr: bool,
         zset: Vec<(f64, Bytes)>,
-    ) -> Result<usize, RedisErr> {
-        let entry = self.get_entry_mut(key);
+    ) -> Result<usize> {
+        let mut state = self.db.state.lock().unwrap();
+        let entry = state.table.get_mut(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_zset() {
@@ -308,19 +303,16 @@ impl Database {
                 for (score, member) in zset {
                     value.zadd(nx, xx, lt, gt, ch, incr, score, member);
                 }
-                let entry = Entry {
-                    value: Value::ZSet(value),
-                    expire_at: None,
-                    touch_at: SystemTime::now(),
-                };
-                self.table.insert(key.to_string(), entry);
+                let entry = Entry::new(Value::ZSet(value), None);
+                state.table.insert(key.to_string(), entry);
                 Ok(value_len)
             }
         }
     }
 
-    pub fn zcard(&mut self, key: &str) -> Result<usize, RedisErr> {
-        let entry = self.get_entry_ref(key);
+    pub fn zcard(&mut self, key: &str) -> Result<usize> {
+        let mut state = self.db.state.lock().unwrap();
+        let entry = state.table.get_mut(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_zset() {
@@ -332,8 +324,9 @@ impl Database {
         }
     }
 
-    pub fn zrem(&mut self, key: &str, members: Vec<Bytes>) -> Result<usize, RedisErr> {
-        let entry = self.get_entry_mut(key);
+    pub fn zrem(&mut self, key: &str, members: Vec<Bytes>) -> Result<usize> {
+        let mut state = self.db.state.lock().unwrap();
+        let entry = state.table.get_mut(key);
         match entry {
             Some(entry) => {
                 if !entry.value.is_zset() {
@@ -352,112 +345,252 @@ impl Database {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn get_value_ref(&mut self, key: &str) -> Option<&Value> {
-        match self.get_entry_ref(key) {
-            Some(entry) => Some(&entry.value),
-            None => None,
-        }
-    }
-
-    pub fn get_value_mut(&mut self, key: &str) -> Option<&mut Value> {
-        match self.get_entry_mut(key) {
-            Some(entry) => Some(&mut entry.value),
-            None => None,
-        }
-    }
-
-    pub fn get_entry_ref(&mut self, key: &str) -> Option<&Entry> {
-        match self.table.get_mut(key) {
-            Some(entry) => {
-                entry.touch_at = SystemTime::now();
-                Some(entry)
-            }
-            None => None,
-        }
-    }
-
-    pub fn get_entry_mut(&mut self, key: &str) -> Option<&mut Entry> {
-        let entry = self.table.get_mut(key);
-        match entry {
-            Some(entry) => {
-                entry.touch_at = SystemTime::now();
-                Some(entry)
-            }
-            None => None,
-        }
-    }
-
-    pub fn set_entry(&mut self, key: &str, entry: Entry) {
-        self.table.insert(key.to_string(), entry);
-    }
-
-    pub fn set_value(&mut self, key: &str, value: Value, expire_at: Option<SystemTime>) {
-        let entry = Entry {
-            value,
-            expire_at,
-            touch_at: SystemTime::now(),
-        };
-        self.set_entry(&key, entry);
-    }
-
     pub fn remove(&mut self, key: &str) -> Option<Value> {
-        self.expire_table.remove(key);
-        self.table.remove(key).map(|entry| entry.value)
+        self.db
+            .state
+            .lock()
+            .unwrap()
+            .table
+            .remove(key)
+            .map(|entry| entry.value)
     }
 
     pub fn get_type(&self, key: &str) -> Option<&'static str> {
-        let entry = self.table.get(key);
+        let state = self.db.state.lock().unwrap();
+        let entry = state.table.get(key);
         match entry {
             Some(entry) => Some(entry.value.get_type().to_str()),
             None => None,
         }
     }
 
-    pub fn add_subscripter(&mut self, channel: &str, dest: Rc<RefCell<AsyncConnection>>) {
-        self.publisher
-            .entry(channel.to_string())
-            .or_insert_with(|| Sender::new())
-            .add_receiver(Receiver::new(dest))
-    }
-
-    pub fn remove_subscripter(&mut self, channel: &str, conn_id: usize) {
-        match self.publisher.get_mut(channel) {
-            Some(sender) => {
-                sender.remove_receiver(vec![conn_id]);
-            }
-            None => {}
-        }
-    }
-
-    pub fn expire_items(&self) -> Vec<(String, SystemTime)> {
-        let mut res = Vec::new();
-        for (key, expire_at) in self.expire_table.iter() {
-            res.push((key.clone(), expire_at.clone()))
-        }
-        res
-    }
-
-    pub fn publish(&mut self, channel: &str, message: &str) -> Result<usize, RedisErr> {
-        let sender = self.publisher.get_mut(channel);
-        match sender {
-            Some(sender) => Ok(sender.send(message.to_string())),
-            None => Ok(0),
-        }
-    }
-
     pub fn flush(&mut self) {
-        self.table.clear();
-        self.expire_table.clear();
+        let mut state = self.db.state.lock().unwrap();
+        state.table.clear();
+        state.expire_table.clear();
     }
 
-    // write the database to disk
-    #[allow(dead_code)]
-    pub fn presistent(&mut self, _path: &str) {
-        // TODO: write the database to disk
-        // let mut rdb = RDB::new();
-        // rdb.write(path);
+    pub fn subscribe(&self, channel: String) -> broadcast::Receiver<Bytes> {
+        use std::collections::hash_map::Entry;
+        let mut state = self.db.state.lock().unwrap();
+        match state.publisher.entry(channel.clone()) {
+            Entry::Occupied(e) => e.get().subscribe(),
+            Entry::Vacant(entry) => {
+                trace!("subscribe to channel: {}", channel);
+                let (tx, rx) = broadcast::channel(1024);
+                entry.insert(tx);
+                rx
+            }
+        }
     }
+
+    pub fn publish(&self, channel: String, msg: Bytes) -> usize {
+        let state = self.db.state.lock().unwrap();
+
+        if let Some(tx) = state.publisher.get(&channel) {
+            trace!(
+                "publish message to channel: {}, msg: {}",
+                channel,
+                String::from_utf8_lossy(&msg.to_vec().as_slice())
+            );
+            tx.send(msg).unwrap()
+        } else {
+            0
+        }
+    }
+
+    pub fn shutdown_purge_task(&self) {
+        let mut state = self.db.state.lock().unwrap();
+
+        state.shutdown = true;
+
+        // drop the lock before notify the background task
+        drop(state);
+
+        // notify the background task to exit
+        self.db.background_task.notify_one();
+    }
+
+    pub fn bf_add(&self, key: String, value: String) -> Result<()> {
+        let mut state = self.db.state.lock().unwrap();
+        let entry = state.table.get_mut(&key);
+        match entry {
+            Some(entry) => {
+                if !entry.value.is_bloomfilter() {
+                    return Err(RedisErr::WrongType);
+                }
+                let bloom = entry.value.as_bloomfilter_mut().unwrap();
+                bloom.add(&value);
+                Ok(())
+            }
+            None => {
+                let mut bloom = crate::value::BloomFilter::new();
+                bloom.add(&value);
+                let entry = Entry::new(Value::BloomFilter(bloom), None);
+                state.table.insert(key, entry);
+                Ok(())
+            }
+        }
+    }
+
+    pub fn bf_exists(&self, key: &str, value: &str) -> Result<bool> {
+        let state = self.db.state.lock().unwrap();
+        let entry = state.table.get(key);
+        match entry {
+            Some(entry) => {
+                if !entry.value.is_bloomfilter() {
+                    return Err(RedisErr::WrongType);
+                }
+                let bloom = entry.value.as_bloomfilter_ref().unwrap();
+                Ok(bloom.contains(&value))
+            }
+            None => Ok(false),
+        }
+    }
+
+    pub fn object_info(&self, key: &str) -> Result<String> {
+        let state = self.db.state.lock().unwrap();
+        let entry = state.table.get(key);
+        match entry {
+            Some(entry) => Ok(format!("{:?}", entry.value)),
+            None => Err(RedisErr::KeyNotFound),
+        }
+    }
+
+    pub fn get_object_last_touch(&self, key: &str) -> Option<Instant> {
+        let state = self.db.state.lock().unwrap();
+        let entry = state.table.get(key);
+        match entry {
+            Some(entry) => Some(entry.touch_at),
+            None => None,
+        }
+    }
+} // impl DB
+
+#[derive(Debug)]
+struct Shared {
+    // guard the state by mutex
+    state: Mutex<State>,
+
+    background_task: Notify,
+}
+
+impl Shared {
+    // purge all the expired keys and return the next expire time
+    fn purge_expired_keys(&self) -> Option<Instant> {
+        let mut state = self.state.lock().unwrap();
+
+        if state.shutdown {
+            return None;
+        }
+
+        let now = Instant::now();
+
+        while let Some((key, instant)) = state.expire_table.iter().next().cloned() {
+            if instant > now {
+                return Some(instant);
+            }
+
+            state.expire_table.remove(&(key.clone(), instant));
+
+            state.table.remove(&key);
+        }
+
+        None
+    }
+
+    fn is_shutdown(&self) -> bool {
+        self.state.lock().unwrap().shutdown
+    }
+} // impl Shared
+
+#[derive(Debug)]
+pub struct Entry {
+    value: Value,
+    expire_at: Option<Instant>,
+    touch_at: Instant,
+}
+
+impl Entry {
+    #[allow(dead_code)]
+    pub fn new(value: Value, expire_at: Option<Instant>) -> Self {
+        Self {
+            value,
+            expire_at,
+            touch_at: Instant::now(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn get_value(&self) -> &Value {
+        &self.value
+    }
+
+    #[allow(dead_code)]
+    pub fn get_touched_at(&self) -> Instant {
+        self.touch_at
+    }
+
+    #[allow(dead_code)]
+    pub fn set_touch_at(&mut self, touch_at: Instant) {
+        self.touch_at = touch_at;
+    }
+
+    #[allow(dead_code)]
+    pub fn get_expire_at(&self) -> Option<Instant> {
+        self.expire_at
+    }
+} // impl Entry
+
+/*
+a second thought, Maybe it's not nescery to implment all the date manipulation method in the database layer.
+There are duplicate code in the command layer and the database could only provide the basic data operate method.
+*/
+
+#[derive(Debug)]
+struct State {
+    table: HashMap<String, Entry>,
+
+    // seperate key space for pub-sub
+    publisher: HashMap<String, broadcast::Sender<Bytes>>,
+
+    expire_table: BTreeSet<(String, Instant)>,
+
+    shutdown: bool,
+}
+
+impl State {
+    pub fn new() -> Self {
+        Self {
+            table: HashMap::new(),
+            publisher: HashMap::new(),
+            expire_table: BTreeSet::new(),
+            shutdown: false,
+        }
+    }
+
+    pub fn next_expire(&self) -> Option<Instant> {
+        self.expire_table.iter().next().map(|(_, instant)| *instant)
+    }
+}
+
+async fn purge_expired_tasks(sharad: Arc<Shared>) {
+    while sharad.is_shutdown() == false {
+        if let Some(when) = sharad.purge_expired_keys() {
+            tokio::select! {
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(when)) => {
+                    // do nothing
+                }
+                _ = sharad.background_task.notified() => {
+                    // do nothing
+                }
+            }
+        } else {
+            sharad.background_task.notified().await;
+        }
+    }
+
+    debug!("purge expired task exit")
 }
 
 #[cfg(test)]
@@ -469,8 +602,8 @@ mod tests {
     #[test]
     fn test_get_set() {
         let key = "key".to_string();
-        let val = b"value".to_vec();
-        let mut db = Database::new();
+        let val = Bytes::from_static(b"value");
+        let mut db = DB::new();
         let res = db.set(key.clone(), val.clone(), false, false, false, false, None);
         assert_eq!(res, Ok(None));
         assert_eq!(db.get(&key), Ok(val.clone()));
@@ -479,7 +612,11 @@ mod tests {
         let res = db.set(key.clone(), val.clone(), true, false, false, false, None);
         assert_eq!(res, Err(RedisErr::NoAction));
         assert_eq!(
-            db.table
+            db.db
+                .state
+                .lock()
+                .unwrap()
+                .table
                 .get(&key)
                 .unwrap()
                 .value
@@ -491,7 +628,7 @@ mod tests {
 
         let res = db.set(
             key.clone(),
-            b"new_val".to_vec(),
+            Bytes::from_static(b"new_val"),
             false,
             false,
             true,
@@ -500,42 +637,85 @@ mod tests {
         );
         assert_eq!(res, Ok(Some(val.clone())));
         assert_eq!(
-            db.table
+            db.db
+                .state
+                .lock()
+                .unwrap()
+                .table
                 .get(&key)
                 .unwrap()
                 .value
                 .as_kv_ref()
                 .unwrap()
                 .clone(),
-            b"new_val".to_vec()
+            Bytes::from_static(b"new_val")
         );
 
         let res = db.set(
             key.clone(),
-            b"new_val".to_vec(),
+            Bytes::from_static(b"new_val"),
             false,
             false,
             false,
             false,
-            Some(SystemTime::now() + Duration::from_secs(60)),
+            Some(Instant::now() + Duration::from_secs(60)),
         );
         assert_eq!(res, Ok(None));
-        assert_eq!(db.table.get(&key).unwrap().expire_at.is_some(), true);
+        assert_eq!(
+            db.db
+                .state
+                .lock()
+                .unwrap()
+                .table
+                .get(&key)
+                .unwrap()
+                .expire_at
+                .is_some(),
+            true
+        );
 
         let _res = db.set(key.clone(), val.clone(), false, false, false, false, None);
-        assert_eq!(db.table.get(&key).unwrap().expire_at.is_some(), false);
-        db.table.get_mut(&key).unwrap().expire_at =
-            Some(SystemTime::now() + Duration::from_secs(60));
+        assert_eq!(
+            db.db
+                .state
+                .lock()
+                .unwrap()
+                .table
+                .get(&key)
+                .unwrap()
+                .expire_at
+                .is_some(),
+            false
+        );
+        db.db
+            .state
+            .lock()
+            .unwrap()
+            .table
+            .get_mut(&key)
+            .unwrap()
+            .expire_at = Some(Instant::now() + Duration::from_secs(60));
         let res = db.set(key.clone(), val.clone(), false, false, false, true, None);
         assert_eq!(res, Ok(None));
-        assert_eq!(db.table.get(&key).unwrap().expire_at.is_some(), true);
+        assert_eq!(
+            db.db
+                .state
+                .lock()
+                .unwrap()
+                .table
+                .get(&key)
+                .unwrap()
+                .expire_at
+                .is_some(),
+            true
+        );
     }
 
     #[test]
     fn test_del() {
         let key = "key".to_string();
-        let val = b"value".to_vec();
-        let mut db = Database::new();
+        let val = Bytes::from_static(b"value");
+        let mut db = DB::new();
         let res = db.set(key.clone(), val, false, false, false, false, None);
         assert_eq!(res, Ok(None));
 
@@ -546,9 +726,9 @@ mod tests {
     #[test]
     fn test_expire() {
         let key = "key".to_string();
-        let val = b"value".to_vec();
+        let val = Bytes::from_static(b"value");
         let expire_from_now = Duration::from_secs(10);
-        let mut db = Database::new();
+        let mut db = DB::new();
         let res = db.set(
             key.clone(),
             val.clone(),
@@ -556,7 +736,7 @@ mod tests {
             false,
             false,
             false,
-            Some(SystemTime::now() + expire_from_now),
+            Some(Instant::now() + expire_from_now),
         );
         assert_eq!(res, Ok(None));
         assert_eq!(db.get(&key), Ok(val));
@@ -567,7 +747,7 @@ mod tests {
     #[test]
     fn test_zadd() {
         let key = "key".to_string();
-        let mut db = Database::new();
+        let mut db = DB::new();
         let res = db.zadd(
             &key,
             true,
@@ -576,9 +756,12 @@ mod tests {
             false,
             false,
             false,
-            vec![(1.0, b"one".to_vec())],
+            vec![(1.0, Bytes::from_static(b"one"))],
         );
-        println!("{}", db.table.get(&key).unwrap().value);
+        println!(
+            "{}",
+            db.db.state.lock().unwrap().table.get(&key).unwrap().value
+        );
         assert_eq!(res, Ok(1));
 
         let res = db.zadd(
@@ -589,9 +772,15 @@ mod tests {
             false,
             false,
             false,
-            vec![(2.0, b"one".to_vec()), (2.0, b"two".to_vec())],
+            vec![
+                (2.0, Bytes::from_static(b"one")),
+                (2.0, Bytes::from_static(b"two")),
+            ],
         );
-        println!("{}", db.table.get(&key).unwrap().value);
+        println!(
+            "{}",
+            db.db.state.lock().unwrap().table.get(&key).unwrap().value
+        );
         assert_eq!(res, Ok(1));
 
         let res = db.zadd(
@@ -602,10 +791,16 @@ mod tests {
             false,
             true,
             false,
-            vec![(3.0, b"two".to_vec()), (3.0, b"three".to_vec())],
+            vec![
+                (3.0, Bytes::from_static(b"two")),
+                (3.0, Bytes::from_static(b"three")),
+            ],
         );
 
-        println!("{}", db.table.get(&key).unwrap().value);
+        println!(
+            "{}",
+            db.db.state.lock().unwrap().table.get(&key).unwrap().value
+        );
         assert_eq!(res, Ok(1));
 
         let res = db.zadd(
@@ -616,9 +811,15 @@ mod tests {
             false,
             true,
             false,
-            vec![(1.0, b"two".to_vec()), (3.0, b"three".to_vec())],
+            vec![
+                (1.0, Bytes::from_static(b"two")),
+                (3.0, Bytes::from_static(b"three")),
+            ],
         );
-        println!("{}", db.table.get(&key).unwrap().value);
+        println!(
+            "{}",
+            db.db.state.lock().unwrap().table.get(&key).unwrap().value
+        );
         assert_eq!(res, Ok(2));
 
         let res = db.zadd(
@@ -629,9 +830,15 @@ mod tests {
             true,
             true,
             false,
-            vec![(2.0, b"two".to_vec()), (4.0, b"four".to_vec())],
+            vec![
+                (2.0, Bytes::from_static(b"two")),
+                (4.0, Bytes::from_static(b"four")),
+            ],
         );
-        println!("{}", db.table.get(&key).unwrap().value);
+        println!(
+            "{}",
+            db.db.state.lock().unwrap().table.get(&key).unwrap().value
+        );
         assert_eq!(res, Ok(2));
 
         let res = db.zadd(
@@ -642,9 +849,15 @@ mod tests {
             false,
             true,
             true,
-            vec![(1.0, b"one".to_vec()), (5.0, b"five".to_vec())],
+            vec![
+                (1.0, Bytes::from_static(b"one")),
+                (5.0, Bytes::from_static(b"five")),
+            ],
         );
-        println!("{}", db.table.get(&key).unwrap().value);
+        println!(
+            "{}",
+            db.db.state.lock().unwrap().table.get(&key).unwrap().value
+        );
         assert_eq!(res, Ok(2));
     }
 }
