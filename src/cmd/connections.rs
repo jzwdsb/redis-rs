@@ -1,7 +1,9 @@
+//! Connection related commands
+
 use super::*;
-use crate::db::Database;
+use crate::db::DB;
 use crate::frame::Frame;
-use crate::RedisErr;
+use crate::Result;
 
 use marco::Applyer;
 
@@ -13,14 +15,14 @@ impl Quit {
         Quit {}
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Quit, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Quit> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"QUIT")?;
 
         Ok(Quit::new())
     }
 
-    pub fn apply(self, _db: &mut Database) -> Frame {
+    pub fn apply(self, _db: &mut DB) -> Frame {
         Frame::SimpleString("OK".to_string())
     }
 }

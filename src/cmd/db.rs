@@ -1,21 +1,26 @@
+//! DB related commands
+
 use super::*;
-use crate::db::Database;
+
+use crate::db::DB;
 use crate::frame::Frame;
-use crate::RedisErr;
+use crate::{RedisErr, Result};
 
 use marco::Applyer;
 
+use bytes::Bytes;
+
 #[derive(Debug, Applyer)]
 pub struct Ping {
-    message: Option<Vec<u8>>,
+    message: Option<Bytes>,
 }
 
 impl Ping {
-    pub fn new(message: Option<Vec<u8>>) -> Self {
+    pub fn new(message: Option<Bytes>) -> Self {
         Self { message }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         if frames.len() > 2 {
             return Err(RedisErr::WrongNumberOfArguments);
         }
@@ -29,7 +34,7 @@ impl Ping {
         Ok(Self::new(message))
     }
 
-    pub fn apply(self, _db: &mut Database) -> Frame {
+    pub fn apply(self, _db: &mut DB) -> Frame {
         if let Some(message) = self.message {
             Frame::BulkString(message)
         } else {
@@ -46,7 +51,7 @@ impl Flush {
         Self {}
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         if frames.len() != 1 {
             return Err(RedisErr::WrongNumberOfArguments);
         }
@@ -54,7 +59,7 @@ impl Flush {
         Ok(Self::new())
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
         db.flush();
         Frame::SimpleString("OK".to_string())
     }
@@ -66,8 +71,8 @@ mod test {
 
     #[test]
     fn test_flush() {
-        let mut db = Database::new();
-        let cmd = Flush::from_frames(vec![Frame::BulkString(b"flush".to_vec())]);
+        let mut db = DB::new();
+        let cmd = Flush::from_frames(vec![Frame::BulkString(Bytes::from_static(b"flush"))]);
         assert_eq!(cmd.is_ok(), true);
         let cmd: Flush = cmd.unwrap();
 

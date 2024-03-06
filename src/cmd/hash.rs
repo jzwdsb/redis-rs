@@ -1,22 +1,27 @@
+//! Hash commands
+
 use super::*;
-use crate::db::Database;
+
+use crate::db::DB;
 use crate::frame::Frame;
-use crate::RedisErr;
+use crate::{RedisErr, Result};
 
 use marco::Applyer;
+
+use bytes::Bytes;
 
 #[derive(Debug, Applyer)]
 pub struct HSet {
     key: String,
-    field_values: Vec<(String, Vec<u8>)>,
+    field_values: Vec<(String, Bytes)>,
 }
 
 impl HSet {
-    fn new(key: String, field_values: Vec<(String, Vec<u8>)>) -> Self {
+    fn new(key: String, field_values: Vec<(String, Bytes)>) -> Self {
         Self { key, field_values }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"HSET")?;
 
@@ -27,13 +32,13 @@ impl HSet {
             let value = next_bytes(&mut iter)?; // value
             field_values.push((field, value));
         }
-        if field_values.len() == 0 {
+        if field_values.is_empty() {
             return Err(RedisErr::WrongNumberOfArguments);
         }
         Ok(Self::new(key, field_values))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
         match db.hset(self.key, self.field_values.clone()) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
@@ -57,7 +62,7 @@ impl HGet {
         Self { key, field }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"HGET")?;
 
@@ -66,7 +71,7 @@ impl HGet {
         Ok(Self::new(key, field))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
+    pub fn apply(self, db: &mut DB) -> Frame {
         match db.hget(&self.key, &self.field) {
             Ok(value) => match value {
                 Some(v) => Frame::BulkString(v),
@@ -89,12 +94,12 @@ mod test {
 
     #[test]
     fn test_hset() {
-        let mut db = Database::new();
+        let mut db = DB::new();
         let cmd = HSet::from_frames(vec![
-            Frame::BulkString(b"hset".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
-            Frame::BulkString(b"field".to_vec()),
-            Frame::BulkString(b"value".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"hset")),
+            Frame::BulkString(Bytes::from_static(b"key")),
+            Frame::BulkString(Bytes::from_static(b"field")),
+            Frame::BulkString(Bytes::from_static(b"value")),
         ])
         .unwrap();
         let result = cmd.apply(&mut db);
@@ -103,11 +108,11 @@ mod test {
 
     #[test]
     fn test_hget() {
-        let mut db: Database = Database::new();
+        let mut db = DB::new();
         let cmd = HGet::from_frames(vec![
-            Frame::BulkString(b"hget".to_vec()),
-            Frame::BulkString(b"key".to_vec()),
-            Frame::BulkString(b"field".to_vec()),
+            Frame::BulkString(Bytes::from_static(b"hget")),
+            Frame::BulkString(Bytes::from_static(b"key")),
+            Frame::BulkString(Bytes::from_static(b"field")),
         ])
         .unwrap();
         let result = cmd.apply(&mut db);

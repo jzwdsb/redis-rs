@@ -1,10 +1,10 @@
-use marco::Applyer;
-
-use crate::{db::Database, frame::Frame, value::Value, RedisErr};
+//! Bloom Filter commands
 
 use super::*;
 
-use bloomfilter::Bloom;
+use crate::{db::DB, frame::Frame};
+
+use marco::Applyer;
 
 #[derive(Debug, Applyer)]
 pub struct BFAdd {
@@ -17,7 +17,7 @@ impl BFAdd {
         Self { key, value }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"BF.ADD")?;
         let key = next_string(&mut iter)?;
@@ -25,24 +25,10 @@ impl BFAdd {
         Ok(Self::new(key, value))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
-        match db.get_value_mut(&self.key) {
-            Some(value) => match value {
-                Value::BloomFilter(bf) => {
-                    bf.set(&self.value);
-                    Frame::Integer(1)
-                }
-                _ => Frame::Error(
-                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
-                ),
-            },
-            None => {
-                // TODO: 1024, 1024 should be configurable or calculated
-                let mut bf = Bloom::new(1024, 1024);
-                bf.set(&self.value);
-                db.set_value(&self.key, Value::BloomFilter(bf), None);
-                Frame::Integer(1)
-            }
+    pub fn apply(self, db: &mut DB) -> Frame {
+        match db.bf_add(self.key, self.value) {
+            Ok(()) => Frame::Integer(1),
+            Err(_) => Frame::Integer(0),
         }
     }
 }
@@ -58,7 +44,7 @@ impl BFExists {
         Self { key, value }
     }
 
-    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, RedisErr> {
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self> {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"BF.EXISTS")?;
         let key = next_string(&mut iter)?;
@@ -66,21 +52,11 @@ impl BFExists {
         Ok(Self::new(key, value))
     }
 
-    pub fn apply(self, db: &mut Database) -> Frame {
-        match db.get_value_mut(&self.key) {
-            Some(value) => match value {
-                Value::BloomFilter(bf) => {
-                    if bf.check(&self.value) {
-                        Frame::Integer(1)
-                    } else {
-                        Frame::Integer(0)
-                    }
-                }
-                _ => Frame::Error(
-                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
-                ),
-            },
-            None => Frame::Integer(0),
+    pub fn apply(self, db: &mut DB) -> Frame {
+        match db.bf_exists(&self.key, &self.value) {
+            Ok(true) => Frame::Integer(1),
+            Ok(false) => Frame::Integer(0),
+            Err(_) => Frame::Error("ERR".to_string()),
         }
     }
 }

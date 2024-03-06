@@ -7,11 +7,9 @@ use std::{
     fmt::{Display, Formatter},
 };
 
-use marco::ValueDecorator;
-
 use bloomfilter::Bloom;
-
-type Bytes = Vec<u8>;
+use bytes::Bytes;
+use marco::ValueDecorator;
 
 #[derive(Clone, Debug)]
 pub struct Z {
@@ -27,7 +25,7 @@ impl PartialEq for Z {
 
 impl PartialOrd for Z {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 
@@ -72,7 +70,7 @@ impl ZSet {
     pub fn len(&self) -> usize {
         self.hmap.len()
     }
-
+    
     pub fn zadd(
         &mut self,
         nx: bool,   // Only set the key if it does not already exist.
@@ -126,7 +124,7 @@ impl ZSet {
             return 1;
         }
 
-        return 0;
+        0
     }
 
     pub fn remove(&mut self, member: &Bytes) -> bool {
@@ -139,6 +137,44 @@ impl ZSet {
             return true;
         }
         false
+    }
+}
+
+impl Clone for ZSet {
+    fn clone(&self) -> Self {
+        let mut lists = skiplist::OrderedSkipList::new();
+        for (k, v) in self.hmap.iter() {
+            lists.insert(Z {
+                score: *v,
+                member: k.clone(),
+            });
+        }
+
+        Self {
+            hmap: self.hmap.clone(),
+            lists,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BloomFilter {
+    bloom: Bloom<String>,
+}
+
+impl BloomFilter {
+    pub fn new() -> Self {
+        Self {
+            bloom: Bloom::new(1024, 1000),
+        }
+    }
+
+    pub fn add(&mut self, value: &str) {
+        self.bloom.set(&value.to_string());
+    }
+
+    pub fn contains(&self, value: &str) -> bool {
+        self.bloom.check(&value.to_string())
     }
 }
 
@@ -167,7 +203,7 @@ impl ValueType {
     }
 }
 
-#[derive(Debug, ValueDecorator)]
+#[derive(Debug, Clone, ValueDecorator)]
 #[allow(dead_code)]
 pub enum Value {
     KV(Bytes),
@@ -176,7 +212,7 @@ pub enum Value {
     Hash(HashMap<String, Bytes>),
     ZSet(ZSet),
 
-    BloomFilter(Bloom<String>),
+    BloomFilter(BloomFilter),
 }
 
 impl Display for Value {
@@ -219,7 +255,7 @@ impl Display for Value {
                     if i != 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}:{}", String::from_utf8_lossy(k.clone().as_slice()), v)?;
+                    write!(f, "{}:{}", String::from_utf8_lossy(k), v)?;
                 }
                 write!(f, "}}")
             }

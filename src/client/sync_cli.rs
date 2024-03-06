@@ -9,8 +9,10 @@ use std::net::TcpStream;
 // use mio::net::TcpStream;
 use std::{error::Error, net::SocketAddr};
 
-use crate::connection::{FrameReader, FrameWriter, SyncConnection};
+use crate::connection::SyncConnection;
 use crate::frame::Frame;
+
+use bytes::Bytes;
 
 pub struct SyncConn {
     conn: SyncConnection,
@@ -21,13 +23,13 @@ impl SyncConn {
         Self { conn }
     }
 
-    pub fn get(&mut self, key: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub fn get(&mut self, key: &str) -> Result<Bytes, Box<dyn Error>> {
         let req = build_cmd_frame("GET", &[key]);
         self.conn.write_frame(req)?;
 
         let resp = self.conn.read_frame()?;
         match resp {
-            Frame::SimpleString(s) => Ok(s.as_bytes().to_vec()),
+            Frame::SimpleString(s) => Ok(Bytes::from(s)),
             Frame::BulkString(s) => Ok(s),
             _ => Err("Invalid response".into()),
         }
@@ -57,7 +59,7 @@ pub struct BlockClient {
 
 impl BlockClient {
     fn new(conn: SyncConn) -> Self {
-        Self { conn: conn }
+        Self { conn }
     }
 
     pub fn open(addr: &str) -> Result<Self, Box<dyn Error>> {
@@ -74,9 +76,9 @@ impl BlockClient {
 
 fn build_cmd_frame(cmd: &str, args: &[&str]) -> Frame {
     let mut frame = vec![];
-    frame.push(Frame::BulkString(cmd.as_bytes().to_vec()));
+    frame.push(Frame::BulkString(Bytes::copy_from_slice(cmd.as_bytes())));
     for arg in args {
-        frame.push(Frame::BulkString(arg.as_bytes().to_vec()));
+        frame.push(Frame::BulkString(Bytes::copy_from_slice(arg.as_bytes())));
     }
     Frame::Array(frame)
 }

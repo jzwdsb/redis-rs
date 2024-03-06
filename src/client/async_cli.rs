@@ -14,6 +14,8 @@ use tokio::{
 
 use crate::frame::Frame;
 
+use bytes::Bytes;
+
 // use tokio as asynchronous runtime
 pub struct AsyncConnection {
     stream: TcpStream,
@@ -46,11 +48,11 @@ impl AsyncConnection {
         Ok(())
     }
 
-    pub async fn get(&mut self, key: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub async fn get(&mut self, key: &str) -> Result<Bytes, Box<dyn Error>> {
         let cmd = Frame::Array(
             [
-                Frame::BulkString("GET".as_bytes().to_vec()),
-                Frame::BulkString(key.as_bytes().to_vec()),
+                Frame::BulkString(Bytes::from_static(b"GET")),
+                Frame::BulkString(Bytes::copy_from_slice(key.as_bytes())),
             ]
             .to_vec(),
         );
@@ -58,7 +60,7 @@ impl AsyncConnection {
         let result = self.read_frame().await?;
         match result {
             Frame::BulkString(data) => Ok(data),
-            Frame::Nil => Ok(vec![]),
+            Frame::Nil => Ok(Bytes::new()),
             _ => Err("Invalid response".into()),
         }
     }
@@ -66,9 +68,9 @@ impl AsyncConnection {
     pub async fn set(&mut self, key: &str, value: &str) -> Result<(), Box<dyn Error>> {
         let cmd = Frame::Array(
             [
-                Frame::BulkString("SET".as_bytes().to_vec()),
-                Frame::BulkString(key.as_bytes().to_vec()),
-                Frame::BulkString(value.as_bytes().to_vec()),
+                Frame::BulkString(Bytes::from_static(b"SET")),
+                Frame::BulkString(Bytes::copy_from_slice(key.as_bytes())),
+                Frame::BulkString(Bytes::copy_from_slice(value.as_bytes())),
             ]
             .to_vec(),
         );

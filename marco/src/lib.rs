@@ -65,7 +65,7 @@ fn impl_command_parse(ast: &syn::DeriveInput) -> TokenStream {
     let name = &ast.ident;
     let gen = quote! {
         impl CommandParser for #name {
-            fn parse(frames: Vec<Frame>) -> Result<Box<dyn CommandApplyer>, RedisErr> {
+            fn parse(frames: Vec<Frame>) -> Result<Box<dyn CommandApplyer>> {
                 Ok(Box::new(#name::from_frames(frames)?))
             }
         }
@@ -89,7 +89,7 @@ fn impl_command_apply(ast: &syn::DeriveInput) -> TokenStream {
     let name = &ast.ident;
     let gen = quote! {
         impl CommandApplyer for #name {
-            fn apply(self: Box<Self>, db: &mut Database) -> Frame {
+            fn apply(self: Box<Self>, db: DB) -> Frame {
                 self.apply(db)
             }
         }
