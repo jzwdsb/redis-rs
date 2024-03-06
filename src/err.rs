@@ -58,8 +58,8 @@ impl From<std::num::ParseIntError> for RedisErr {
     }
 }
 
-impl Into<String> for RedisErr {
-    fn into(self) -> String {
-        std::fmt::format(format_args!("{:?}", self))
+impl From<RedisErr> for String {
+    fn from(err: RedisErr) -> String {
+        std::fmt::format(format_args!("{:?}", err))
     }
 }

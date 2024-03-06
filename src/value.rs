@@ -25,7 +25,7 @@ impl PartialEq for Z {
 
 impl PartialOrd for Z {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 
@@ -70,7 +70,7 @@ impl ZSet {
     pub fn len(&self) -> usize {
         self.hmap.len()
     }
-
+    
     pub fn zadd(
         &mut self,
         nx: bool,   // Only set the key if it does not already exist.
@@ -124,7 +124,7 @@ impl ZSet {
             return 1;
         }
 
-        return 0;
+        0
     }
 
     pub fn remove(&mut self, member: &Bytes) -> bool {
@@ -152,7 +152,7 @@ impl Clone for ZSet {
 
         Self {
             hmap: self.hmap.clone(),
-            lists: lists,
+            lists,
         }
     }
 }

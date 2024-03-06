@@ -59,6 +59,12 @@ impl ServerBuilder {
     }
 } // impl ServerBuilder
 
+impl Default for ServerBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Server is the main struct of the server
 // data retrieval and storage are done through the server
 // this process can divide into different layers
@@ -89,8 +95,8 @@ impl Server {
         let listener = tokio::net::TcpListener::bind(addr).await?;
 
         Ok(Self {
-            db: db,
-            listener: listener,
+            db,
+            listener,
             limit_connections: Arc::new(Semaphore::new(max_client)),
             shutdown: Arc::new(Notify::new()),
             wait_duration: Duration::from_millis(100),

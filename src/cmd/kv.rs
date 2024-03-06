@@ -28,7 +28,6 @@ impl Get {
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         match db.get(&self.key) {
             Ok(value) => Frame::BulkString(value),
             Err(e) => match e {
@@ -59,14 +58,13 @@ impl MGet {
         while iter.len() > 0 {
             key.push(next_string(&mut iter).unwrap());
         }
-        if key.len() == 0 {
+        if key.is_empty() {
             return Err(RedisErr::SyntaxError);
         }
         Ok(Self::new(key))
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         let mut result = Vec::new();
         for k in self.key {
             match db.get(&k) {
@@ -178,7 +176,6 @@ impl Set {
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         let expire_at = match (self.ex, self.exat) {
             (Some(d), None) => Some(Instant::now() + d),
             (None, Some(t)) => Some(t),
@@ -227,14 +224,13 @@ impl MSet {
             let value = next_bytes(&mut iter)?;
             pairs.push((key, value));
         }
-        if pairs.len() == 0 {
+        if pairs.is_empty() {
             return Err(RedisErr::SyntaxError);
         }
         Ok(Self::new(pairs))
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         for (key, value) in self.pairs {
             match db.set(key, value, false, false, false, false, None) {
                 Ok(_) => {}

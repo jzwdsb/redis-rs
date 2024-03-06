@@ -45,7 +45,7 @@ impl Display for Frame {
 
 impl Frame {
     pub fn from_bytes(data: &[u8]) -> Result<Frame> {
-        if data.len() == 0 {
+        if data.is_empty() {
             return Err(RedisErr::FrameIncomplete);
         }
 
@@ -126,7 +126,7 @@ impl Frame {
                 let mut result = Vec::new();
                 for _ in 0..num {
                     // remove \r\n
-                    let frame = Frame::from_bytes(&data)?;
+                    let frame = Frame::from_bytes(data)?;
                     data = &data[frame.len()..];
                     result.push(frame)
                 }
@@ -145,7 +145,7 @@ impl Frame {
                 let mut result = Vec::new();
                 for item in s.split(' ') {
                     // check simple string or integer
-                    if item.len() == 0 {
+                    if item.is_empty() {
                         continue;
                     }
                     match item.as_bytes()[0] {
@@ -162,7 +162,7 @@ impl Frame {
                     }
                 }
 
-                return Ok(Frame::Array(result));
+                Ok(Frame::Array(result))
             }
             _ => Err(RedisErr::FrameMalformed),
         }

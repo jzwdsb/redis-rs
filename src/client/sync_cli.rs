@@ -59,7 +59,7 @@ pub struct BlockClient {
 
 impl BlockClient {
     fn new(conn: SyncConn) -> Self {
-        Self { conn: conn }
+        Self { conn }
     }
 
     pub fn open(addr: &str) -> Result<Self, Box<dyn Error>> {

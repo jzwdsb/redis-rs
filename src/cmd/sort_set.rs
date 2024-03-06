@@ -109,7 +109,6 @@ impl ZAdd {
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         match db.zadd(
             &self.key, self.nx, self.xx, self.lt, self.gt, self.ch, self.incr, self.zset,
         ) {
@@ -146,7 +145,6 @@ impl ZCard {
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         match db.zcard(&self.key) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
@@ -187,7 +185,6 @@ impl ZRem {
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         match db.zrem(&self.key, self.members) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {

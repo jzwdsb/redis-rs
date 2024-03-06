@@ -32,7 +32,6 @@ impl LPush {
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         match db.lpush(&self.key, self.values) {
             Ok(len) => Frame::Integer(len as i64),
             Err(e) => match e {
@@ -68,12 +67,11 @@ impl LRange {
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         match db.lrange(&self.key, self.start, self.stop) {
             Ok(values) => Frame::Array(
                 values
                     .into_iter()
-                    .map(|v| Frame::BulkString(v))
+                    .map(Frame::BulkString)
                     .collect::<Vec<_>>(),
             ),
             Err(e) => match e {

@@ -1,10 +1,6 @@
 //! Database module
 
-
-use crate::{
-    value::Value,
-    RedisErr, Result,
-};
+use crate::{value::Value, RedisErr, Result};
 
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -120,6 +116,7 @@ impl DB {
 
         let old = state.table.insert(key.clone(), entry);
         if get && old.is_some() {
+            #[allow(clippy::unnecessary_unwrap)]
             return Ok(Some(old.unwrap().value.to_kv().unwrap()));
         }
         if let Some(old) = old {
@@ -215,12 +212,9 @@ impl DB {
                         stop
                     };
 
-                    list.iter()
-                        .skip(start as usize)
-                        .take((stop - start) as usize)
-                        .for_each(|v| {
-                            res.push(v.clone());
-                        });
+                    list.iter().skip(start).take(stop - start).for_each(|v| {
+                        res.push(v.clone());
+                    });
                 }
                 Ok(res)
             }
@@ -266,7 +260,7 @@ impl DB {
                     return Err(RedisErr::WrongType);
                 }
                 let map = entry.value.as_hash_ref().unwrap();
-                Ok(map.get(field).map(|v| v.clone()))
+                Ok(map.get(field).cloned())
             }
             None => Err(RedisErr::KeyNotFound),
         }
@@ -391,7 +385,7 @@ impl DB {
             trace!(
                 "publish message to channel: {}, msg: {}",
                 channel,
-                String::from_utf8_lossy(&msg.to_vec().as_slice())
+                String::from_utf8_lossy(msg.to_vec().as_slice())
             );
             tx.send(msg).unwrap()
         } else {
@@ -442,7 +436,7 @@ impl DB {
                     return Err(RedisErr::WrongType);
                 }
                 let bloom = entry.value.as_bloomfilter_ref().unwrap();
-                Ok(bloom.contains(&value))
+                Ok(bloom.contains(value))
             }
             None => Ok(false),
         }
@@ -459,11 +453,8 @@ impl DB {
 
     pub fn get_object_last_touch(&self, key: &str) -> Option<Instant> {
         let state = self.db.state.lock().unwrap();
-        let entry = state.table.get(key);
-        match entry {
-            Some(entry) => Some(entry.touch_at),
-            None => None,
-        }
+
+        state.table.get(key).map(|entry| entry.touch_at)
     }
 } // impl DB
 
@@ -575,7 +566,7 @@ impl State {
 }
 
 async fn purge_expired_tasks(sharad: Arc<Shared>) {
-    while sharad.is_shutdown() == false {
+    while !sharad.is_shutdown() {
         if let Some(when) = sharad.purge_expired_keys() {
             tokio::select! {
                 _ = tokio::time::sleep_until(tokio::time::Instant::from_std(when)) => {

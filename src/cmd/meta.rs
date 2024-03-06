@@ -55,7 +55,6 @@ impl Del {
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         match db.del(&self.key) {
             Some(_) => Frame::Integer(1),
             None => Frame::Integer(0),
@@ -83,7 +82,6 @@ impl Expire {
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         let expire_at = Instant::now() + self.expire;
         match db.expire(&self.key, expire_at) {
             Ok(()) => Frame::Integer(1),

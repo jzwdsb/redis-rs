@@ -6,9 +6,8 @@ use bytes::Bytes;
 #[allow(dead_code)]
 pub fn bytes_to_printable_string(bytes: &Bytes) -> String {
     let str = String::from_utf8_lossy(bytes);
-    let escaped = str.replace("\r", "\\r").replace("\n", "\\n");
 
-    escaped
+    str.replace('\r', "\\r").replace('\n', "\\n")
 }
 
 #[cfg(test)]

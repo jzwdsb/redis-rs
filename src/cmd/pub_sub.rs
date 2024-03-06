@@ -55,7 +55,7 @@ pub struct Subscribe {
 impl Subscribe {
     fn new(channels: Vec<String>) -> Self {
         Self {
-            channels: channels,
+            channels,
             cmd_parser: Parser::new(),
         }
     }
@@ -64,7 +64,7 @@ impl Subscribe {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"SUBSCRIBE")?;
         let mut channels = Vec::new();
-        while let Some(next) = iter.next() {
+        for next in iter {
             match next {
                 Frame::SimpleString(channel) => {
                     channels.push(channel);
@@ -185,30 +185,27 @@ async fn subscribe_channel(
 }
 
 fn make_message_frame(channel_name: String, message: Bytes) -> Frame {
-    let frame = Frame::Array(vec![
+    Frame::Array(vec![
         Frame::BulkString(Bytes::from_static(b"message")),
         Frame::BulkString(Bytes::from(channel_name)),
         Frame::BulkString(message),
-    ]);
-    frame
+    ])
 }
 
 fn make_subscribe_frame(channel_name: String, num_subscriptions: usize) -> Frame {
-    let frame = Frame::Array(vec![
+    Frame::Array(vec![
         Frame::BulkString(Bytes::from_static(b"message")),
         Frame::BulkString(Bytes::from(channel_name)),
         Frame::Integer(num_subscriptions as i64),
-    ]);
-    frame
+    ])
 }
 
 fn make_unsubscribe_frame(channel_name: String, num_subscriptions: usize) -> Frame {
-    let frame = Frame::Array(vec![
+    Frame::Array(vec![
         Frame::BulkString(Bytes::from_static(b"unsubscribe")),
         Frame::BulkString(Bytes::from(channel_name)),
         Frame::Integer(num_subscriptions as i64),
-    ]);
-    frame
+    ])
 }
 
 // Unsubscribe from a channel
@@ -227,7 +224,7 @@ impl Unsubscribe {
         let mut iter = frames.into_iter();
         check_cmd(&mut iter, b"UNSUBSCRIBE")?;
         let mut channels = Vec::new();
-        while let Some(next) = iter.next() {
+        for next in iter {
             match next {
                 Frame::SimpleString(channel) => {
                     channels.push(channel);
@@ -241,8 +238,8 @@ impl Unsubscribe {
         Ok(Self::new(channels))
     }
 
-    pub fn apply(self, db: &mut DB) -> Frame {
-        unreachable!("Unsubscribe command should be handled by the Subscribe command")
+    pub fn apply(self, _db: &mut DB) -> Frame {
+        todo!("Unsubscribe command should be handled by the Subscribe command")
     }
 
     pub fn channels(&self) -> &[String] {

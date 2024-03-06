@@ -32,7 +32,7 @@ impl HSet {
             let value = next_bytes(&mut iter)?; // value
             field_values.push((field, value));
         }
-        if field_values.len() == 0 {
+        if field_values.is_empty() {
             return Err(RedisErr::WrongNumberOfArguments);
         }
         Ok(Self::new(key, field_values))
@@ -72,7 +72,6 @@ impl HGet {
     }
 
     pub fn apply(self, db: &mut DB) -> Frame {
-        let db = db;
         match db.hget(&self.key, &self.field) {
             Ok(value) => match value {
                 Some(v) => Frame::BulkString(v),
